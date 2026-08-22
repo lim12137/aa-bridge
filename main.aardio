@@ -1,0 +1,580 @@
+//DSH 鲸鱼托盘（aardio 版）v1.3 自包含版
+//常驻系统托盘，管理 dsh (DeepSeek CLI) 网页服务。
+//右键鲸鱼图标：启动 dsh / 打开网页 / 升级 dsh / 重启 dsh / 退出
+//v1.2：打开网页改用内置 WebView2 浏览器壳（常驻，不自动关闭）；
+//      「关闭 dsh」改为「重启 dsh」；「退出」会同时关闭 dsh 与浏览器壳；
+//      移除系统托盘气泡通知（Win11 下应用名显示乱码），仅保留自绘弹窗。
+//v1.1：自绘通知弹窗；启动不再打开浏览器(--no-open)；
+//      自动修复 .env 中 dsh 禁止的 DSH_* 变量（转为环境变量导出）；
+//      修复 taskkill 退出码判断错误导致升级/关闭无效的问题。
+
+import win.ui;
+/*DSG{{*/
+var winform = win.form(text="DSH 鲸鱼")
+/*}}*/
+
+import win.util.tray;
+import win.ui.menu;
+import win.image;
+import gdip;
+import gdip.icoBuilder;
+import fonts.fontAwesome;
+import process;
+import process.popen;
+import web.view;
+
+var WEB_PORT = 7331;
+var WEB_URI = "http://127.0.0.1:" ++ WEB_PORT ++ "/";
+var LOG_DIR = io.joinpath(string.expand("%LOCALAPPDATA%"),"DshTray");
+io.createDir(LOG_DIR);
+var LOG_PATH = io.joinpath(LOG_DIR,"dsh-tray.log");
+var WEB_LOG_PATH = io.joinpath(LOG_DIR,"dsh-web.log");
+var USER_PROFILE = string.expand("%USERPROFILE%");
+var ENV_PATH = io.joinpath(USER_PROFILE,".env");
+
+// ---------- 内置 Node.js + dsh（自包含模式）----------
+var BUILTIN_NODEJS = io.joinpath(io.fullpath("/res/nodejs"), "node.exe");
+var BUILTIN_DSH = io.joinpath(io.fullpath("/res/dsh/dsh"), "lib", "bin.js");
+var BUILTIN_NPM = io.joinpath(io.fullpath("/res/nodejs"), "npm.cmd");
+// 运行时目录：用户数据目录，存放 dsh 运行时状态
+var RUNTIME_DIR = io.joinpath(string.expand("%LOCALAPPDATA%"), "DshTray", "runtime");
+io.createDir(RUNTIME_DIR);
+
+// ---------- 单实例保护 ----------
+::Kernel32.CreateMutexW(null,false,"Local\\DshTray.SingleInstance");
+if( ..lasterr() == 183 ){
+	winform.msgboxErr("DSH 鲸鱼托盘已在运行。","DSH 鲸鱼");
+	return;
+}
+
+// ---------- 绘制鲸鱼图标（复刻原版 WhaleIcon.cs）----------
+var createWhaleIcon = function(){
+	var drawWhale = function(size){
+		var scale = size/64;
+		var bmp = gdip.bitmap(size,size);
+		var graphics = gdip.graphics(bmp);
+		graphics.smoothingMode = 4/*_SmoothingModeAntiAlias*/;
+		graphics.scale(scale,scale); //统一按 64x64 逻辑坐标绘制
+
+		var bgBrush = gdip.solidBrush(0xFF07374F);
+		var whaleBrush = gdip.solidBrush(0xFF7FD3F0);
+		var finBrush = gdip.solidBrush(0xFF449BBE);
+		var eyeBrush = gdip.solidBrush(0xFF052738);
+		var highlightBrush = gdip.solidBrush(0xFFE8FAFF);
+
+		//背景圆
+		graphics.fillEllipse(bgBrush,2,2,60,60);
+
+		//喷水
+		var sprayPen = gdip.pen(0xFF8BE2FF,3);
+		sprayPen.startCap = 2/*_LineCapRound*/;
+		sprayPen.endCap = 2/*_LineCapRound*/;
+		graphics.drawBezier(sprayPen,36,22,36,14,41,14,42,21);
+		graphics.drawBezier(sprayPen,42,21,44,14,49,15,48,24);
+
+		//尾巴
+		var tail = gdip.path();
+		tail.addPolygon([16,35,6,27,8,38,3,46,17,44]);
+
+		//身体
+		var body = gdip.path();
+		body.addBezier(12,38,16,27,33,21,47,27);
+		body.addBezier(47,27,57,31,55,42,44,47);
+		body.addBezier(44,47,31,53,16,48,12,38);
+		body.closeFigure();
+		graphics.fillPath(whaleBrush,tail);
+		graphics.fillPath(whaleBrush,body);
+
+		//鱼鳍
+		var fin = gdip.path();
+		fin.addBezier(34,45,38,52,45,51,47,43);
+		fin.addBezier(43,45,39,46,34,45,34,45);
+		fin.closeFigure();
+		graphics.fillPath(finBrush,fin);
+
+		//眼睛 + 高光
+		graphics.fillEllipse(eyeBrush,45,32,4,4);
+		graphics.fillEllipse(highlightBrush,46,32,1.5,1.5);
+
+		tail.delete();body.delete();fin.delete();
+		sprayPen.delete();
+		bgBrush.delete();whaleBrush.delete();finBrush.delete();eyeBrush.delete();highlightBrush.delete();
+		graphics.delete();
+		return bmp;
+	}
+
+	var builder = gdip.icoBuilder();
+	var sizes = [16,20,24,32,40,48,64,256];
+	for(i=1;#sizes;1){ builder.push(drawWhale(sizes[i])); }
+	var ico = builder.build();
+	builder.clear(true);
+	return win.image.createSharedIcon(tostring(ico),true,16);
+}
+
+var tray = win.util.tray(winform,createWhaleIcon(),"DSH 鲸鱼 - 管理 dsh 网页服务");
+
+// ---------- 日志 ----------
+var appendLog = function(msg){
+	var f = io.file(LOG_PATH,"ab+");
+	f.write('[',tostring(time(),"%Y-%m-%d %H:%M:%S"),"] ",msg,'\r\n');
+	f.close();
+}
+appendLog("DSH 鲸鱼托盘已启动 v1.3（自包含：内置 Node.js + dsh）。");
+
+// ---------- 自绘通知弹窗（不依赖系统通知设置，保证可见）----------
+var TOAST_W,TOAST_H = 380,118;
+
+var toast = win.form(text="DSH 通知";left=0;top=0;right=TOAST_W;bottom=TOAST_H;
+	border="none";exmode="toolwindow";sysmenu=false;max=false;min=false;sizebox=false;parent=winform)
+toast.add({
+	bk={cls="bkplus";left=0;top=0;right=TOAST_W;bottom=TOAST_H;
+		bgcolor=0x2C2018;//深蓝黑 RGB(24,32,44)
+		border={radius=12;color=0xFF5A6A78;width=1};z=1};
+	icon={cls="plus";left=18;top=20;right=58;bottom=60;
+		iconText='\uF05A';
+		iconStyle={font=LOGFONT(h=-30;name='FontAwesome');align="center";valign="center"};
+		color=0xDB9834;z=2};
+	title={cls="plus";text="DSH 鲸鱼";left=70;top=18;right=TOAST_W-16;bottom=44;
+		align="left";color=0xFFFFFF;font=LOGFONT(h=-15;weight=700);z=3};
+	msg={cls="plus";text="";left=70;top=46;right=TOAST_W-16;bottom=TOAST_H-14;
+		align="left";valign="top";color=0xBEB4AA;font=LOGFONT(h=-13);z=4}
+})
+
+//置顶但不抢焦点（仅设置属性，不显示——避免启动时在左上角闪现空弹窗）
+::User32.SetWindowPos(toast.hwnd,-1/*_HWND_TOPMOST*/,0,0,0,0,0x13/*_SWP_NOSIZE|_SWP_NOMOVE|_SWP_NOACTIVATE*/);
+
+//按字符宽度折行（最多 3 行）
+var wrapText = function(s,maxChars){
+	s = string.replace(s,"<\r?\n>|\r"," ");
+	var lines = {};
+	while( #s > maxChars && #lines < 2 ){
+		table.push(lines,string.slice(s,1,maxChars,true));
+		s = string.slice(s,maxChars+1,-1,true);
+	}
+	table.push(lines,#s > maxChars ? string.slice(s,1,maxChars-1,true) ++ "…" : s);
+	return string.join(lines,'\n');
+}
+
+//kind: "info" | "ok" | "error"
+var showToast = function(title,message,kind){
+	var iconText;
+	select(kind : "info") {
+		case "ok" { iconText='\uF058'; toast.icon.iconColor=0xFF2ECC71; }
+		case "error" { iconText='\uF06A'; toast.icon.iconColor=0xFFE74C3C; }
+		else { iconText='\uF05A'; toast.icon.iconColor=0xFF3498DB; }
+	}
+	toast.icon.iconText = iconText;
+	toast.title.text = title;
+	toast.msg.text = wrapText(message,30);
+
+	//显示到屏幕右下角（任务栏上方）
+	var wa = ::RECT();
+	::User32.SystemParametersInfoW(0x30/*_SPI_GETWORKAREA*/,0,wa,0);
+	toast.setPos(wa.right-TOAST_W-16,wa.bottom-TOAST_H-16);
+	toast.show(8/*_SW_SHOWNA*/); //显示但不激活，不抢焦点
+	toastHideDeadline = time.tick() + 4000;
+}
+
+//统一隐藏定时器（避免多个定时器互相干扰）
+toastHideDeadline = 0;
+winform.setInterval(
+	function(){
+		if(toastHideDeadline && time.tick() >= toastHideDeadline){
+			toastHideDeadline = 0;
+			toast.show(false);
+		}
+	},200
+)
+
+//仅使用自绘弹窗（系统托盘气泡在 Win11 下应用名会显示乱码，已移除）
+var notify = function(title,message,kind){
+	showToast(title,message,kind);
+}
+
+// ---------- 内置浏览器壳（web.view 打开 dsh 网页，常驻不自动关闭）----------
+var shellForm,wbShell;
+var openShell = function(){
+	if(shellForm){
+		wbShell.go(WEB_URI); //重新导航（dsh 可能刚重启过）
+		shellForm.show();
+		shellForm.activate();
+		return;
+	}
+	shellForm = win.form(text="DSH 网页";right=1080;bottom=740)
+	wbShell = web.view(shellForm);
+	wbShell.go(WEB_URI);
+	shellForm.onClose = function(){
+		shellForm = null; //用户手动关闭后，下次「打开网页」时重新创建
+		wbShell = null;
+	}
+	shellForm.show();
+}
+
+// ---------- 退出：先关闭 dsh 进程与浏览器壳，再退出托盘 ----------
+var exitApp = function(){
+	appendLog("用户选择退出：正在关闭 dsh 进程与内置浏览器……");
+	thread.invokeAndWait(function(){
+		import process.popen;
+		import com.wmi;
+		//与 worker 相同的查询：自包含路径不含 @deepseek-ai，限定 node.exe 排除 cmd 包装进程
+		var rows = com.wmi.getTable("SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%dsh%lib%bin.js%'");
+		if(rows){
+			for(i=1;#rows;1){
+				var id = tonumber(rows[i].ProcessId);
+				if(id){
+					var tk = process.popen("taskkill",{"/pid";tostring(id);"/t";"/f"});
+					tk.readAll();
+				}
+			}
+		}
+		//验证进程确实退出（最多等 8 秒）
+		var deadline = time.tick() + 8000;
+		while(time.tick() < deadline){
+			var left = com.wmi.getTable("SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%dsh%lib%bin.js%'");
+			if(!left || !#left) return;
+			sleep(250);
+		}
+	})
+	if(wbShell) wbShell.close();
+	if(shellForm) shellForm.close();
+	winform.close();
+}
+
+// ---------- 后台工作线程（纯函数）----------
+var dshWorker = function(winform,action,cfg){
+	import process;
+	import process.popen;
+	import wsock.tcp.client;
+	import com.wmi;
+
+	var appendLog = function(msg){
+		var f = io.file(cfg.logPath,"ab+");
+		f.write('[',tostring(time(),"%Y-%m-%d %H:%M:%S"),"] ",msg,'\r\n');
+		f.close();
+	}
+
+	var findExecutable = function(name){
+		// 优先使用内置的 Node.js/npm
+		if(name == "node.exe" and io.exist(BUILTIN_NODEJS)) return BUILTIN_NODEJS;
+		if(name == "npm.cmd" and io.exist(BUILTIN_NPM)) return BUILTIN_NPM;
+		var path = string.getenv("PATH");
+		if(!path) return null;
+		for dir in string.lines(path,";") {
+			dir = string.trim(dir,' \t"');
+			if(#dir){
+				var candidate = io.joinpath(dir,name);
+				if(io.exist(candidate)) return candidate;
+			}
+		}
+	}
+
+	var isWebReady = function(){
+		return wsock.tcp.client.test("127.0.0.1",cfg.port,1)!=null;
+	}
+
+	var findDshProcessIds = function(){
+		//注意：自包含模式下命令行是 res\dsh\dsh\lib\bin.js（不含 @deepseek-ai），
+		//限定 Name='node.exe' 可排除 cmd.exe 包装进程，也不会误杀其他 Node.js 程序。
+		var rows = com.wmi.getTable("SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%dsh%lib%bin.js%'");
+		var map = {};
+		var ids = {};
+		if(rows){
+			for(i=1;#rows;1){
+				var id = tonumber(rows[i].ProcessId);
+				if(id && !map[id]){ map[id] = true; table.push(ids,id); }
+			}
+		}
+		return ids;
+	}
+
+	//修复 .env：新版 dsh 禁止 .env 设置 DSH_* 等引导变量（会直接崩溃退出），
+	//将这些变量从 .env 移出并作为环境变量注入启动命令。
+	var repairEnv = function(){
+		if(!io.exist(cfg.envPath)) return {};
+		var data = string.load(cfg.envPath);
+		if(!data) return {};
+
+		var BOOTSTRAP_NAMES = "PATH HOME USERPROFILE SHELL NODE_OPTIONS NODE_PATH NODE_EXTRA_CA_CERTS LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT BASH_ENV ENV SHELLOPTS BASHOPTS PERL5OPT PERL5LIB PYTHONSTARTUP PYTHONPATH RUBYOPT RUBYLIB JAVA_TOOL_OPTIONS _JAVA_OPTIONS JDK_JAVA_OPTIONS PYTHONHOME GIT_SSH GIT_SSH_COMMAND GIT_EXTERNAL_DIFF GIT_PAGER GIT_EDITOR GIT_ASKPASS SSH_ASKPASS GIT_CONFIG_GLOBAL GIT_CONFIG_COUNT EDITOR VISUAL PAGER BROWSER DEEPSEEK_BASE_URL DEEPSEEK_SEARCH_BASE_URL SSL_CERT_FILE SSL_CERT_DIR HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY REQUESTS_CA_BUNDLE CURL_CA_BUNDLE NODE_TLS_REJECT_UNAUTHORIZED";
+		var bootstrapSet = {};
+		for w in string.gmatch(BOOTSTRAP_NAMES,"\a+"){ bootstrapSet[w]=true; }
+
+		var isBootstrapOnly = function(name){
+			var upper = string.upper(name);
+			if(bootstrapSet[upper]) return true;
+			return string.match(upper,"^DSH_") || string.match(upper,"^XDG_") || string.match(upper,"^DYLD_") || string.match(upper,"^BASH_FUNC_");
+		}
+
+		var kept = {};
+		var exported = {};
+		for line in string.lines(data,"<\r?\n>|\r") {
+			var k,v = string.match(line,"^\s*<export\s>?([A-Za-z_]\w*)\s*=\s*(.*)$");
+			if(k && isBootstrapOnly(k)){
+				v = string.trim(v);
+				if(#v>=2){
+					var c1 = string.slice(v,1,1);
+					var c2 = string.right(v,1);
+					if( (c1=='"' && c2=='"') || (c1=="'" && c2=="'") ){
+						v = string.slice(v,2,-2);
+					}
+				}
+				table.push(exported,{k=k;v=v});
+			} else {
+				table.push(kept,line);
+			}
+		}
+
+		if(#exported){
+			io.copy(cfg.envPath,cfg.envPath ++ ".dshtray.bak"); //备份
+			string.save(cfg.envPath,#kept ? string.join(kept,'\r\n') ++ '\r\n' : "");
+			appendLog("已修复 .env：将 " ++ #exported ++ " 个 dsh 禁止的变量移出并转为环境变量（备份 .env.dshtray.bak）。" );
+		}
+		return exported;
+	}
+
+	var stopAllDsh = function(){
+		var ids = findDshProcessIds();
+		if(!#ids) return true,"没有正在运行的 dsh 进程。";
+		var failures = {};
+		for(i=1;#ids;1){
+			appendLog("正在结束 dsh 进程 " ++ ids[i] ++ " ...");
+			var tk = process.popen("taskkill",{"/pid";tostring(ids[i]);"/t";"/f"});
+			var out,errOut,exitCode = tk.readAll(); //注意：必须在 readAll 返回值中取退出码
+			if(exitCode == 0){
+				appendLog("dsh 进程 " ++ ids[i] ++ " 已结束。");
+			} else {
+				table.push(failures,"进程 " ++ ids[i] ++ " 结束失败（taskkill 退出码 " ++ tostring(exitCode) ++ "）");
+			}
+		}
+		if(#failures) return false,"部分 dsh 进程未能关闭：" ++ string.join(failures,'\r\n');
+
+		//等待进程真正消失、端口真正释放（否则重启会误判为“已在运行”）
+		var deadline = time.tick() + 8000;
+		while(time.tick() < deadline){
+			if( (#findDshProcessIds() == 0) && !isWebReady() ){
+				return true,"已关闭 " ++ #ids ++ " 个 dsh 进程。";
+			}
+			sleep(250);
+		}
+		if(#findDshProcessIds()) return false,"dsh 进程在 taskkill 后仍然存活。";
+		return true,"已关闭 " ++ #ids ++ " 个 dsh 进程。";
+	}
+
+	var readWebLogTail = function(){
+		var data = string.load(cfg.webLogPath);
+		if(!data) return "";
+		return #data > 4000 ? string.slice(data,-4000,-1) : data;
+	}
+
+	var waitForWebServer = function(){
+		var deadline = time.tick() + 45000;
+		while(time.tick() < deadline){
+			if(isWebReady()) return true;
+			sleep(250);
+		}
+		return isWebReady();
+	}
+
+	//确保 dsh 网页服务已启动（--no-open：绝不自动打开浏览器）
+	var ensureWebServer = function(){
+		if(isWebReady()) return true,"";
+
+		var hasProcess = #findDshProcessIds() > 0;
+		if(!hasProcess){
+			var exportedVars = repairEnv();
+			var pre = "";
+			for(i=1;#exportedVars;1){
+				pre ++= 'set "' ++ exportedVars[i].k ++ '=' ++ exportedVars[i].v ++ '"&& ';
+			}
+			//自包含模式：优先使用内置 Node.js + 内置 dsh；不存在时回退系统安装的 dsh
+			var inner;
+			if(io.exist(cfg.nodeExe) && io.exist(cfg.dshBin)){
+				appendLog("自包含模式：使用内置 Node.js 与内置 dsh。");
+				inner = pre ++ '"' ++ cfg.nodeExe ++ '" "' ++ cfg.dshBin ++ '" web --no-open --host 127.0.0.1 --port ' ++ cfg.port ++ ' >> "' ++ cfg.webLogPath ++ '" 2>&1';
+			} else {
+				var dshPath = findExecutable("dsh.cmd") : findExecutable("dsh");
+				if(!dshPath) return false,"未找到 dsh：内置资源缺失且系统中也未安装 dsh。";
+				appendLog("回退模式：使用系统安装的 dsh（" ++ dshPath ++ "）。");
+				inner = pre ++ '"' ++ dshPath ++ '" web --no-open --host 127.0.0.1 --port ' ++ cfg.port ++ ' >> "' ++ cfg.webLogPath ++ '" 2>&1';
+			}
+			var prcs,err = process("cmd.exe",'/d /s /c "' ++ inner ++ '"',{
+				createNoWindow = true;
+				workDir = cfg.workDir;
+			});
+			if(!prcs) return false,"无法启动 dsh：" ++ (err : "未知错误");
+			appendLog("已启动 dsh 网页进程 PID=" ++ prcs.id ++ "，监听端口 " ++ cfg.port ++ "（--no-open）。" );
+			prcs.free();
+		}
+
+		if(waitForWebServer()) return true,"";
+
+		var output = readWebLogTail();
+		var summary = ( string.indexOf(output,"createZstdDecompress") || string.indexOf(output,"stripTypeScriptTypes") )
+			? "当前 Node.js 版本与安装的 dsh 不兼容。请先将 Node.js 升级到当前 LTS 版本，然后重试。"
+			: "dsh 启动后立即退出，或在 45 秒内没有响应。";
+		appendLog("dsh 启动失败：" ++ summary);
+		return false,summary ++ '\r\n\r\n日志：' ++ cfg.webLogPath;
+	}
+
+	var result;
+	select(action) {
+		case "start" {
+			if(isWebReady()){
+				result = {kind="info";title="dsh 正在运行";message="dsh 网页服务已在运行中。"};
+			} else {
+				var ok,msg = ensureWebServer();
+				result = ok
+					? {kind="ok";title="dsh 已启动";message="dsh 网页服务已启动（" ++ cfg.url ++ "）。"}
+					: {kind="error";title="无法启动 dsh";message=msg};
+			}
+		}
+		case "openWeb" {
+			var ok,msg = ensureWebServer();
+			if(ok){
+				result = {kind="ok";title="DSH 网页";message="已在内置浏览器中打开 dsh 网页。";openShell=true};
+			} else {
+				result = {kind="error";title="无法启动 dsh";message=msg};
+			}
+		}
+		case "upgrade" {
+			var ok,msg = stopAllDsh();
+			if(ok){
+				appendLog("开始执行 dsh 全局升级。");
+				var npmPath = findExecutable("npm.cmd") : findExecutable("npm") : BUILTIN_NPM;
+				var inner = '"' ++ npmPath ++ '" install -g @deepseek-ai/dsh@latest --no-fund --no-audit';
+				var prcs = process.popen("cmd.exe",'/d /s /c "' ++ inner ++ '"',{workDir=cfg.workDir});
+				var output,errOut,exitCode = prcs.readAll();
+				appendLog("dsh 升级命令退出，退出码 " ++ tostring(exitCode) ++ "。");
+				if(exitCode == 0){
+					//升级成功后自动启动 dsh 网页服务
+					appendLog("升级成功，正在自动启动 dsh 网页服务……");
+					var started,startMsg = ensureWebServer();
+					if(started){
+						appendLog("dsh 已随升级自动启动。");
+						result = {kind="ok";title="升级完成";message="dsh 已完成升级，并已自动启动网页服务（" ++ cfg.url ++ "）。"};
+					} else {
+						appendLog("升级后自动启动失败：" ++ startMsg);
+						result = {kind="info";title="升级完成";
+							message="dsh 已完成升级，但自动启动失败：\r\n" ++ startMsg ++ "\r\n\r\n可稍后通过菜单「启动 dsh」重试。"};
+					}
+				} else {
+					result = {kind="error";title="升级 dsh 失败";
+						message="npm 升级命令失败，退出码 " ++ tostring(exitCode) ++ "。\r\n\r\n" ++ string.left(output ++ (errOut:"") ,1200)
+					};
+				}
+			} else {
+				result = {kind="error";title="升级 dsh 失败";message=msg};
+			}
+		}
+		case "restartDsh" {
+			var ok,msg = stopAllDsh();
+			if(ok){
+				appendLog("正在重新启动 dsh 网页服务……");
+				var started,startMsg = ensureWebServer();
+				result = started
+					? {kind="ok";title="dsh 已重启";message="dsh 网页服务已重启（" ++ cfg.url ++ "）。"}
+					: {kind="error";title="重启 dsh 失败";message=startMsg};
+			} else {
+				result = {kind="error";title="重启 dsh 失败";message=msg};
+			}
+		}
+	}
+
+	winform.onWorkerDone(result);
+}
+
+// ---------- UI 线程调度 ----------
+var busy = false;
+var busyStateText = null; //操作进行中时的状态文字（优先显示在托盘菜单，不被定时刷新覆盖）
+
+winform.onWorkerDone = function(result){
+	busy = false;
+	busyStateText = null;
+	if(result.kind == "error"){
+		notify(result.title,"操作失败，请查看详细错误信息。","error");
+		winform.msgboxErr(result.message,result.title);
+	} else {
+		notify(result.title,result.message,result.kind);
+	}
+	if(result[["openShell"]]){
+		openShell();
+	}
+	elseif(shellForm && result.kind=="ok" ){
+		wbShell.go(WEB_URI); //浏览器壳已打开则刷新页面
+	}
+	refreshStatusAsync();
+}
+
+var runAction = function(action,busyTip){
+	if(busy){
+		notify("请稍候","正在执行上一项操作……","info");
+		return;
+	}
+	busy = true;
+	busyStateText = ({start="正在启动";openWeb="正在打开";upgrade="正在升级";restartDsh="正在重启"})[action] : "正在执行操作";
+	notify("DSH 鲸鱼",busyTip,"info"); //立即给出反馈
+	thread.invoke(dshWorker,winform,action,{
+		port = WEB_PORT;
+		logPath = LOG_PATH;
+		webLogPath = WEB_LOG_PATH;
+		workDir = USER_PROFILE;
+		url = WEB_URI;
+		envPath = ENV_PATH;
+		nodeExe = BUILTIN_NODEJS;
+		dshBin = BUILTIN_DSH;
+	})
+}
+
+// ---------- 状态刷新（后台线程查询，结果写入线程共享区）----------
+var refreshStatusAsync = function(){
+	thread.invoke(function(port){
+		import wsock.tcp.client;
+		import com.wmi;
+		var webReady = wsock.tcp.client.test("127.0.0.1",port,1)!=null;
+		var rows = com.wmi.getTable("SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%dsh%lib%bin.js%'");
+		var count = rows ? #rows : 0;
+		var text;
+		if(webReady){ text = "网页已运行"; }
+		elseif(count==0){ text = "未运行"; }
+		elseif(count==1){ text = "正在启动或未响应"; }
+		else { text = "正在启动或未响应（" ++ count ++ " 个进程）"; }
+		thread.set("dshTray.status",{text=text;count=count});
+	},WEB_PORT)
+}
+
+// ---------- 托盘菜单 ----------
+winform.onTrayMessage = {
+	[0x205/*_WM_RBUTTONUP*/] = function(wParam){
+		win.setForeground(winform.hwnd,true);
+
+		var status = thread.get("dshTray.status") : {text="正在检查...";count=0};
+		//操作进行中时优先显示操作状态（如「正在升级」），避免被后台刷新的实际状态覆盖
+		var statusText = busy ? (busyStateText ++ "……") : status.text;
+		var popmenu = win.ui.popmenu(winform);
+		popmenu.add("状态：" ++ statusText,function(){});
+		popmenu.enable(1,false);
+		popmenu.add();//分隔线
+		popmenu.add("启动 dsh",function(){ runAction("start","正在启动 dsh 网页服务……") });
+		popmenu.add("打开网页",function(){ runAction("openWeb","正在打开 dsh 网页……") });
+		popmenu.add("升级 dsh",function(){ runAction("upgrade","正在升级 dsh，请稍候（约 1 分钟）……") });
+		popmenu.add("重启 dsh",function(){ runAction("restartDsh","正在重启 dsh……") });
+		popmenu.add();//分隔线
+		popmenu.add("退出",function(){ exitApp() });
+
+		popmenu.enable(3,!busy);
+		popmenu.enable(4,!busy);
+		popmenu.enable(5,!busy);
+		popmenu.enable(6,!busy);
+
+		popmenu.popup();
+		popmenu.close();
+	};
+	[0x203/*_WM_LBUTTONDBLCLK*/] = function(wParam){
+		runAction("openWeb","正在打开 dsh 网页……");
+	};
+}
+
+//定时刷新状态
+winform.setInterval(refreshStatusAsync,5000);
+refreshStatusAsync();
+
+win.loopMessage();

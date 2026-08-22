@@ -1,0 +1,13 @@
+# 大体积二进制资源（自包含运行时，不进仓库）
+res/
+dist/
+.build/
+node-portable.zip
+*.zip
+
+# aardio 编辑器临时文件
+*.aa.bak.*
+*.aa.rbk.*
+
+# 日志
+*.log
