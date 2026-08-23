@@ -35,6 +35,10 @@ DshTray\
 
 启动 dsh 时优先使用内置资源；`res\` 缺失时自动回退到系统 PATH 中安装的 dsh。
 
+启动失败排查：先看 `%LOCALAPPDATA%\DshTray\dsh-web.log` 的崩溃栈（v1.4 起弹窗直接展示关键原因）。
+第三方插件（`link:` junction 安装）裸导入 `@deepseek-ai/*` 解析失败会令 dsh 启动即崩，
+解法见 `docs/2026-08-23-自包含启动失败-插件依赖解析修复.md`。
+
 ### 方式二：从源码构建
 
 1. 用 [aardio](https://www.aardio.com/) 打开 `default.aproj`
