@@ -1,0 +1,11 @@
+{
+  "name": "aa-bridge",
+  "version": "0.1.0",
+  "description": "AA(aardio autos 全自主智能体) 桥接插件：通过本机 HTTP API（127.0.0.1:9123，token 保护）查询状态、列出/调用 AA 的 26 个基础工具（40 原生 − 17 黑名单 + 3 元工具；load_skill 加载技能包后动态增加）、读取回复。含 skills（API 用法）与 /aa-status、/aa-ask、/aa-toggle 命令。需先运行打好补丁的 AA 副本并在设置中开启「外部桥」。",
+  "author": {
+    "name": "aa-bridge"
+  },
+  "license": "MIT",
+  "commands": "commands",
+  "skills": "skills"
+}

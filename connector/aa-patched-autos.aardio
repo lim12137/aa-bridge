@@ -1,0 +1,2169 @@
+import autos;
+if(_WIN7_LATER) ::Shell32.SetCurrentProcessExplicitAppUserModelID(autos.appUserModelId) //在任务栏显示为分离图标（避免合并到 aardio.exe 分组）
+
+//== AA-BRIDGE PATCH(1/4): 桥配置（外部桥 API/MCP :9123，设置窗可开关）==
+AA_BRIDGE_PORT = 9123;
+AA_BRIDGE_CFG = { enabled = true; token = "" };
+AA_BRIDGE_BASETITLE = autos.title;
+try{
+	import fsys.table;
+	var t = fsys.table( io.appData("aardio/autos/aa-bridge.table"),{enabled=true;token=""} );
+	if( !#t.token ){
+		t.token = "aa" ++ tostring( time.tick() ) ++ tostring( math.random(100000,999999) );
+		t.save();
+	}
+	AA_BRIDGE_CFG.enabled = t.enabled !== false;
+	AA_BRIDGE_CFG.token = t.token;
+}
+catch(e){ AA_BRIDGE_CFG.enabled = true; }
+if( AA_BRIDGE_CFG.enabled )
+	autos.title = AA_BRIDGE_BASETITLE ++ " [MCP:" ++ AA_BRIDGE_PORT ++ "]";
+
+import fonts.fontAwesome;
+import com.interface.IRichEditOleCallback;
+import win.clip;
+import process.admin;
+import win.inputBox;
+import win.ui;
+/*DSG{{*/
+mainForm = win.form(text=autos.title;right=900;bottom=600;bgcolor=0xFFFFFF)
+mainForm.add(
+bkPrompt={cls="bkplus";left=222;top=547;right=788;bottom=594;border={color=0xC0C0C0;radius=16;width=1};db=1;dl=1;dr=1;z=1};
+btnClear={cls="plus";left=134;top=556;right=169;bottom=585;align="left";bgcolor=0xFFFFFF;color=0x3C3C3C;db=1;dl=1;font=LOGFONT(h=-13);iconStyle={font=LOGFONT(h=-22;name='FontAwesome');padding={left=8}};iconText='\uF014';notify=1;textPadding={left=25};z=6};
+btnCopy={cls="plus";left=176;top=556;right=211;bottom=585;align="left";bgcolor=0xFFFFFF;color=0x3C3C3C;db=1;dl=1;font=LOGFONT(h=-13);iconStyle={font=LOGFONT(h=-22;name='FontAwesome');padding={left=8}};iconText='\uF0C5';notify=1;textPadding={left=25};z=7};
+btnFeishu={cls="plus";left=49;top=556;right=84;bottom=586;align="left";color=0x3C3C3C;db=1;dl=1;font=LOGFONT(h=-13);iconStyle={font=LOGFONT(h=-22;name='FontAwesome')};iconText='\uF1D8';notify=1;textPadding={left=25};z=9};
+btnImageAttachment={cls="plus";left=752;top=556;right=784;bottom=585;align="left";bgcolor=0xFFFFFF;border={radius=4};color=0x3C3C3C;db=1;dr=1;font=LOGFONT(h=-13);foreRepeat="scale";iconStyle={font=LOGFONT(h=-19;name='FontAwesome');padding={top=2}};iconText='\uF030';notify=1;paddingBottom=2;paddingLeft=2;paddingRight=2;paddingTop=2;textPadding={left=25};z=11};
+btnSend={cls="plus";text="运行";left=794;top=550;right=889;bottom=590;bgcolor=0xD77800;border={radius=4};color=0xFFFFFF;db=1;dr=1;font=LOGFONT(h=-14);iconStyle={align="left";font=LOGFONT(h=-13;name='FontAwesome');padding={left=15;top=1}};iconText='\uF1B9';notify=1;textPadding={left=15};z=4};
+btnSetting={cls="plus";left=6;top=556;right=41;bottom=586;align="left";color=0x3C3C3C;db=1;dl=1;font=LOGFONT(h=-13);iconStyle={font=LOGFONT(h=-22;name='FontAwesome')};iconText='\uF013';notify=1;textPadding={left=25};z=5};
+btnWeixin={cls="plus";left=91;top=556;right=126;bottom=586;align="left";color=0x3C3C3C;db=1;dl=1;font=LOGFONT(h=-13);iconStyle={font=LOGFONT(h=-22;name='FontAwesome')};iconText='\uF1D7';notify=1;textPadding={left=25};z=8};
+customChat={cls="custom";text="聊天区域";left=0;top=0;right=900;bottom=540;db=1;dl=1;dr=1;dt=1;z=2};
+editPrompt={cls="richedit";left=228;top=554;right=748;bottom=589;autohscroll=false;db=1;dl=1;dr=1;multiline=1;z=3};
+lableMessage={cls="plus";left=147;top=496;right=785;bottom=537;bgcolor=0x3AC267;border={radius=12};color=0xFFFFFF;db=1;dl=1;dr=1;font=LOGFONT(h=-14);hide=1;z=10}
+)
+/*}}*/
+
+mainForm.btnSend.skin({
+    background={
+        default=0xFF0078D7; 
+        hover=0xFF0088EE;   
+        active=0xFF005BB5;  
+        disabled=0xFFCCCCCC;
+    };
+    color={
+        default=0xFFFFFFFF;
+        disabled=0xFF888888;
+    };
+    checked={
+        background={
+            default=0xFFD13438; 
+            hover=0xFFE35458; 
+            active=0xFFA82A2D;
+            disabled=0xFFCCCCCC;
+        };
+        color={
+            default=0xFFFFFFFF;
+            disabled=0xFF888888;
+        }
+    }
+})
+
+mainForm.btnSetting.skin({
+	color={
+		active=0xFF00FF00;
+		default=0xFF3C3C3C;
+		disabled=0xFF6D6D6D;
+		hover=0xFFFF0000		
+	}
+})
+
+mainForm.btnFeishu.skin({
+	color={
+		active=0xFF00FF00;
+		default=0xFF3C3C3C;
+		disabled=0xFF6D6D6D;
+		hover=0xFFFF0000		
+	}
+	checked = {
+		color={
+			active=0xFF00FF00;
+			default=0xFF3370FF;
+			disabled=0xFF6D6D6D;
+			hover=0xFFFF0000		
+		}	
+	}
+})
+
+mainForm.btnClear.skin({
+	color={
+		active=0xFF00FF00;
+		default=0xFF3C3C3C;
+		disabled=0xFF999999;
+		hover=0xFFFF0000		
+	}
+})
+
+mainForm.btnCopy.skin({
+	color={
+		active=0xFF00FF00;
+		default=0xFF3C3C3C;
+		disabled=0xFF999999;
+		hover=0xFFFF0000		
+	}
+})
+
+mainForm.btnWeixin.skin({
+	color={
+		active=0xFF00FF00;
+		default=0xFF3C3C3C;
+		disabled=0xFF6D6D6D;
+		hover=0xFFFF0000		
+	}
+	checked = {
+		color={
+			active=0xFF00FF00;
+			default=0xFF07C160;
+			disabled=0xFF6D6D6D;
+			hover=0xFFFF0000		
+		}	
+	}
+})
+
+mainForm.btnImageAttachment.skin({
+	background={
+		active=0xFFCCCCCC;
+		default=0x00000000;
+		hover=0xFFE6E6E6;
+	};
+	color={
+		active=0xEE333333;
+		default=0xFF3C3C3C;
+		disabled=0xFF999999;
+		hover=0xFFFF0000		
+	}
+})
+
+mainForm.editPrompt.adjustInputLayout = function(focus){
+	var w,h = mainForm.dpiScale(1,1);
+	h = h * 50;
+	
+	focus = focus && !mainForm.btnSend.busy();
+	
+	if(focus){
+		if( ! mainForm.editPrompt["(focusedHeight)"] ){
+			mainForm.bkPrompt.top = mainForm.bkPrompt.top - h;
+			mainForm.bkPrompt.redraw();
+			mainForm.customChat.bottom = mainForm.customChat.bottom - h;
+			mainForm.editPrompt.top = mainForm.editPrompt.top - h;		
+			mainForm.editPrompt["(focusedHeight)"] = true;
+		}
+	}	
+	else{
+		if( mainForm.editPrompt["(focusedHeight)"] ){
+			mainForm.bkPrompt.top = mainForm.bkPrompt.top + h;
+			mainForm.bkPrompt.redraw();
+			mainForm.customChat.bottom = mainForm.customChat.bottom + h;
+			mainForm.editPrompt.top = mainForm.editPrompt.top + h;	
+			mainForm.editPrompt["(focusedHeight)"] = false;	
+		}
+	}
+}
+
+mainForm.setIcon("~/examples/AI/autos.ico"); 
+mainForm.show();
+
+//创建 AI 聊天界面
+import web.form.chat;
+var chatUi = web.form.chat(mainForm.customChat);
+
+
+//必须放在 mainForm.show() 后面（DPI 初始化完成），保证普屏/高分屏都至少调用一次
+mainForm.afterDpiChanged = function(){ 
+	mainForm.setIcon("~/examples/AI/autos.ico"); 
+	chatUi.zoom(100);
+}
+
+import fsys.table;
+var userDataPath = io.appData("aardio/autos");
+var agentConfigPath = io.appData("aardio/autos/agent.table");
+var agentWorkspace = io.createDir( io.joinpath(userDataPath,"workspace") ); 
+
+var config = fsys.table(agentConfigPath,{
+	itemNames = ["默认"];
+	selItem = 1;
+	itemData = [{
+		url="https://api.deepseek.com/v1";
+		key= '';
+		model="deepseek-v4-pro";
+		temperature=1;
+		reasoning={"effort":"max 全力以赴"}
+	}] 
+});
+var aiChatConfig = config.itemData[config.selItem];
+
+import thread.event;
+// 手动复位事件：set 后 wait(0) 会持续返回 true，直到下一轮请求调用 reset()。用于表示“用户已请求停止”的持续状态。
+var eventStop = thread.event(,true);
+
+import com.interface.ITaskbarList3;
+var taskbar = _WIN7_LATER && com.interface.ITaskbarList3.Create();
+
+var sendApiMessage = function(resentCot,prompt){
+  
+	//如果恢复标志与共享链不同步，按普通重试处理，不弹出恢复提示。
+	if(resentCot && !..thread.get("resumeChainOfThought")){
+		//恢复链在竞态中消失时安全降级为普通重试，不伪造“继续”请求。
+		resentCot = false;
+		mainForm.btnSend.text = "重试";
+	}
+
+ 
+	if(!aiChatConfig[["url"]] || string.find(aiChatConfig[["url"]],"aardio\.com") ){
+		mainForm.btnSend.checked = false;
+
+		mainForm.msgboxErr('请在设置中指定支持交错思考+工具调用的大模型。\n禁止在 AA 中使用 ai.aardio.com 接口！');
+		mainForm.btnSetting.oncommand();
+		return;
+	}
+
+    if(!resentCot){
+        var clearPrompt;
+        if(!prompt) {
+        	prompt = mainForm.editPrompt.text;
+        	clearPrompt = true;
+        }
+	
+		if(mainForm.btnSend.text!=="重试"){
+    		// 检查输入是否为空（移除首尾空白）
+    		if(!#string.trim(prompt)){
+        		mainForm.btnSend.checked = false;
+        		
+        		mainForm.msgboxErr("请输入提示词");
+        		mainForm.editPrompt.setFocus();
+        		return;
+    		}	
+		}
+		else{
+			chatUi.clearErrorMessage();
+			
+			//没有临时交错思维链时，空 assistant 只是上次中断留下的占位，重试必须重发原请求。
+			var lastMessage = chatUi.chatMessages[#chatUi.chatMessages];
+			if(lastMessage[["role"]]==="assistant" && !#lastMessage[["content"]]
+				&& !lastMessage[["reasoning_content"]] && !#lastMessage[["tool_calls"]]){
+				table.pop(chatUi.chatMessages);
+			}
+		}
+
+    	// UI 状态变更
+    	if(clearPrompt)mainForm.editPrompt.text = ""; // 清空输入  
+    	
+    	..thread.set("resumeChainOfThought",null);
+    	..thread.set("resumeChainOfThoughtProtocol",null);
+    	..thread.set("resumeInterruptedMessage",null);
+    }
+    elseif(!..thread.get("resumeChainOfThought")){
+        //共享恢复链在竞态中消失时，安全降级为普通重试，不伪造“继续”链也不弹出误导性提示。
+        mainForm.btnSend.text = "重试";
+        return sendApiMessage(false,prompt);
+    }
+	
+    mainForm.btnClear.disabled = true; 
+
+    eventStop.reset(); 
+	var loading = {'\uF254';'\uF251';'\uF252';'\uF253';'\uF250' }
+	
+	//显示动画，但启用按钮
+	mainForm.btnSend.reduce(loading,function(value,index){
+		if(value) mainForm.btnSend.iconText = value;
+		return 150;
+	} )	
+	
+	mainForm.btnSend.checked = true; 
+	mainForm.btnSend.text = "停止";
+	
+	var shouldInjectImageContext;
+    if(!resentCot){
+    	chatUi.showLoading(" 正在思考...");
+    	if(#prompt) {
+    		chatUi.prompt(prompt);
+			mainForm.editPrompt.setFocus();
+			
+			//只在“新图加入”时通知大模型一次，避免在后续多轮对话中产生冗余提示
+			shouldInjectImageContext = mainForm.btnImageAttachment.newImageAttached && type(mainForm.btnImageAttachment.foreground)==="table";
+			mainForm.btnImageAttachment.newImageAttached = null;
+    	}
+    }
+    
+    mainForm.editPrompt.adjustInputLayout(false);
+    mainForm.btnSend.setFocus();
+    
+    config.chatMessages =  chatUi.chatMessages;
+	
+	if(taskbar) taskbar.SetProgressState(mainForm.hwnd,1/*_TBPF_INDETERMINATE*/);
+
+    // 创建 AI 对话线程
+    chatUi.aiChatThread = thread.create( 
+        function(chatUi,mainForm,aiChatConfig,aiConfigItems,eventStop,fromWeiXinClawBotMessage,fromFeishuMessageId,feishuClientInstance,resentCot,shouldInjectImageContext){
+			
+			var fib = ..fiber.create(function(){
+
+            	import web.rest.aiChat;
+            	import autos.tools.schemas;
+          		import autos.tools.handlers;
+          		import autos;
+          		
+            	aiChatConfig.tools = autos.tools.schemas;
+            	aiChatConfig.userAgent = "autos/" + autos.version +"(Windows NT "+ _WIN_VER_MAJOR +"."+_WIN_VER_MINOR+"; +https://aau.cn)";
+         
+            	// 创建 AI API 客户端
+            	var aiClient = web.rest.aiChat(aiChatConfig);
+            	aiClient.setTimeouts(15000,30000,60000);
+             	
+            	if(inet.url.split(aiChatConfig.url)[["host"]]=="openrouter.ai"){
+					aiClient.extraParameters = ..table.mix( aiClient.extraParameters,{
+						session_id = "aardio-aautos-session-" + autos.version;
+					})	
+				}
+            	
+            	aiClient.referer = "https://aau.cn";
+            	aiClient.setHeaders({
+            	 	"X-Title":"aardio autos",
+            	});
+            	
+            	import win.inputBox;
+				..subscribe("afterConsoleOpen",function(){
+					if(console){
+						console.setTitle("autos console - 请勿关闭本窗口！！")
+						
+						console.setCtrlHandlerThread( function(ctrlType){
+	 						mainForm.saveChatMessage(); //用户直接关闭 AI 打开的 console 窗口时保存对话
+						},mainForm);			
+					}
+				} );
+				
+            	aiClient.external = autos.tools.handlers;
+            	
+				autos.tools.handlers.__init__(null,{
+					aiChatConfig = aiChatConfig;
+					aiConfigItems = aiConfigItems;
+					chatUi = chatUi;
+					fromWeiXinClawBotMessage = fromWeiXinClawBotMessage;
+					fromFeishuMessageId = fromFeishuMessageId;
+					feishuClientInstance = feishuClientInstance;
+					mainForm = mainForm;
+				});
+				
+            	var resumeChainOfThoughtProtocol;
+            	var chatMessages = chatUi.chatMessages;
+            	var hasRecoveryChain = resentCot;
+            	var interruptedResponseContent = "";
+            	var hasUncommittedResponse = false;
+            	if(resentCot){
+            		chatMessages = ..thread.get("resumeChainOfThought");
+            		resumeChainOfThoughtProtocol = ..thread.get("resumeChainOfThoughtProtocol");
+            		
+            		if( resumeChainOfThoughtProtocol){
+            	    	if(resumeChainOfThoughtProtocol!=aiClient._protocol){
+            	    		chatUi.onComplete(false); 
+            	    		chatUi.errorMessage("恢复思维链时不能将原接口使用的协议类型 " + resumeChainOfThoughtProtocol + " 更改为 " + aiClient._protocol);
+            				mainForm.btnSend.text = "继续";
+            				return;
+            			}
+            		}
+            		
+            		var interruptedMessage = ..thread.get("resumeInterruptedMessage");
+            		if(interruptedMessage){
+            			//仅折叠进 worker 的临时请求链，不修改 chatUi.chatMessages。
+            			..table.push(chatMessages,interruptedMessage);
+            			..thread.set("resumeInterruptedMessage",null);
+            		}
+            		
+            		//恢复链已经折叠了上次临时 assistant；立即固定，避免本轮尚未收到新分片就被强制终止时丢失。
+            		if(resentCot) ..thread.set("resumeChainOfThought",table.clone(chatMessages));
+            		
+            		var userPrompt = string.trim(mainForm.editPrompt.text);
+            		if(#userPrompt){
+            			..table.push(chatMessages,{
+            				role = "user";
+            				content = userPrompt;
+            			});
+            		}
+            		else{
+            			if(chatMessages[#chatMessages][["role"]]=="assistant"){
+            				..table.push(chatMessages,{
+            					role = "user";
+            					content = "<session_resumed>Connection Restored</session_resumed>";
+            				});
+            			}
+            		}
+            		
+            		//把已经折叠的临时 assistant、以及本次临时 user 提示固定为下一次恢复的基础链。
+            		if(resentCot) ..thread.set("resumeChainOfThought",table.clone(chatMessages));
+            		
+            		mainForm.editPrompt.text = "";
+            	}
+            	elseif(shouldInjectImageContext){
+            		var msg = chatMessages[#chatMessages];
+            		if(msg.role=="user"){
+            			msg.content = msg.content + '<context>用户提供了附件图像。如有必要，你可以调用工具 analyze_image 识别图像（`imageUrlOrPath` 参数请指定为 `attachment`）。</context>'
+            		}
+            	}
+            	
+            	aiClient.beforeToolCalling = lambda () !eventStop.wait(0);
+            	aiClient.onToolCalling = lambda (name,args) !eventStop.wait(0);
+            	aiClient.afterToolCalling = function (chatMessages){
+                 	//已形成完整 assistant/tool 边界；后续子轮重新累计临时正文与 reasoning。
+                 	hasRecoveryChain = true;
+                 	
+                 	..thread.set("resumeChainOfThought",chatMessages);
+                 	..thread.set("resumeChainOfThoughtProtocol",aiClient._protocol);
+                 	..thread.set("resumeInterruptedMessage",null);
+                 	
+                 	interruptedResponseContent = "";
+                 	hasUncommittedResponse = false;
+            	 	return !eventStop.wait(0);
+            	}
+            	aiClient.onToolCallingError = function(err, name, args){
+            		chatUi.showThinking('\n\n工具`'+name+'` 调用时抛出异常:\n```\n'+tostring(err)+'\n```\n调用参数:\n```json\n'+JSON.stringify(args)+'\n```\n\n');
+            	}
+            	
+            	var saveInterruptedState = function(){
+
+            		if(aiClient._protocol!="openai" || !hasUncommittedResponse) return;
+            		
+            		if(!hasRecoveryChain){
+            			//首次收到有效分片时建立临时基础链；零输出中断不会建立恢复链。
+            			..thread.set("resumeChainOfThought",table.clone(chatMessages));
+            			..thread.set("resumeChainOfThoughtProtocol",aiClient._protocol);
+            			hasRecoveryChain = true;
+            		}
+            		
+            		var interruptedMessage = {
+            			role = "assistant";
+            			content = interruptedResponseContent;
+            		};
+            		var reasoningContent = aiClient.reasoningContent;
+            		
+            		//服务端实际返回过 reasoning_content/reasoning 才放入临时恢复消息；空字符串同样保真。
+            		if(reasoningContent!==null){
+            			interruptedMessage.reasoning_content = reasoningContent;
+            		}
+            		
+            		if(#aiClient.thinkingBlock) interruptedMessage.reasoning_details = aiClient.thinkingBlock;
+            		if(#aiClient.encryptedContent) interruptedMessage.encrypted_content = aiClient.encryptedContent;
+            		..thread.set("resumeInterruptedMessage",interruptedMessage);
+            	}
+
+            	::Kernel32.SetThreadExecutionState(0x80000003/*_ES_CONTINUOUS | _ES_SYSTEM_REQUIRED | _ES_DISPLAY_REQUIRED*/);//避免息屏
+            	
+            	::Kernel32.SetCurrentDirectory( (io.appData("aardio/autos/workspace")) );
+            	
+            	var ok,err,errCode,sendBackProtocol = aiClient.messages(chatMessages,
+                	function(deltaText,reasoning){
+						if(eventStop.wait(0)) return false;
+						
+                    	if(#reasoning){
+                    		 hasUncommittedResponse = true;
+                    		 
+                    		 chatUi.showThinking(reasoning);
+                    	}
+                    	
+                    	//纯推理分片的 deltaText 为空：不创建持久 assistant，但保留临时恢复状态。
+                    	if(deltaText===null) chatUi.assistant(null);
+                    	elseif(#deltaText){
+                    		 hasUncommittedResponse = true;
+                    		 
+                    		 interruptedResponseContent = string.concat(interruptedResponseContent,deltaText);
+                    		 chatUi.assistant(deltaText);
+                    	}
+                    	saveInterruptedState();
+                	},resumeChainOfThoughtProtocol
+            	);
+            	
+            	if((!ok || err || eventStop.wait(0)) && hasUncommittedResponse){
+             		saveInterruptedState();
+             	}
+             	
+             	var needRetry;
+            	if(err){ 
+                	needRetry = !eventStop.wait(0);
+                	
+                	if(errCode==12029){
+                		chatUi.errorMessage(`无法与服务器建立连接！<a href="javascript:void(0)" onclick="javascript:external.updateApiKey()">点这里更换其他接口</a>`)
+                	}
+                	elseif(errCode==401){
+                		chatUi.errorMessage(`API 密钥错误！&nbsp;<a href="javascript:void(0)" onclick="javascript:external.updateApiKey()">点这里设置新密钥</a> <code>`+(err||"404 Not Found")+`</code>`)
+                		needRetry = false;
+                	}
+                	elseif(errCode===404){
+                		chatUi.errorMessage("服务器不支持此接口或模型！<code>"+(err||"404 Not Found")+"</code>")
+                		needRetry = false;
+                	}
+                	elseif( errCode==402 || ( type.isString(err) && string.find(string.lower(err)
+                        	,`<%<<balance>|<credit>|<quota>|<key>|<limit>><<insufficient>|<exhausted>|<exceeded>|<run\s*out>>>|<%<<insufficient>|<exhausted>|<exceeded>|<depleted>|<requires more>><<balance>|<credit>|<quota>|<fund>>>`))
+                    	){
+                    		
+                    	import web.rest.aiChat.settingForm;
+                    	chatUi.errorMessage(string.concat(`余额 / 配额不足，<a href="`
+                    		+ web.rest.aiChat.settingForm.getWebSite(aiChatConfig.url,"autos") 
+                    		+`" title="此网址根据 API 接口地址自动生成，仅供参考">此 API 服务平台网址</a><br><code>`,err,"</code>"))
+                   		
+                   		//必须重试 » 微信飞书得到错误信息 » 充值 » 重试成功
+                   		//订阅余额不足也可能返回 429，无法精确判断
+                	}
+                	elseif(type.isString(err) ){
+                   	if( errCode===0 /*无其他错误*/){
+                       	
+                   	   	// 用户中止，且 errCode 为 0 （回复未完成、无其他错误）则不显示错误信息
+                   	   	if( !eventStop.wait(0) /*非用户中止*/ ) {
+                   	    		if(#err) chatUi.errorMessage(err);
+                   	    		else {
+                   	    	    	if(! ( fromWeiXinClawBotMessage || fromFeishuMessageId ) ){
+                   	    	    		chatUi.errorMessage("服务器未发送有效回复正文！");
+                   	    	    	} 
+                   	    	    	else{
+                   	    	    		err = null;
+                   	    	    		errCode = null;
+                   	    	    		needRetry = null;
+                   	    	    		ok = true;
+                   	    	    	}
+                   	    		}
+                   	   	}
+                   		};
+                   		elseif(#err) chatUi.errorMessage(err); 
+                	}
+                	else{
+                		chatUi.errorMessage(err)
+                	}	
+            	}
+           	
+            	// 恢复按钮状态
+            	chatUi.onComplete(ok,err,errCode); 
+            	
+            	autos.tools.handlers.__exit__()
+      	
+            	if(hasRecoveryChain && (!ok || err || eventStop.wait(0))){
+                	
+                	//仅在交错思考回传工具调用结果失败或用户点击“停止”才有必要恢复思维链（此注释不能删除）。
+                	..thread.set("resumeChainOfThought",chatMessages);
+                	
+                	//初始流式请求 sendBackProtocol 仍可能为空，仍须锁定协议。
+                	..thread.set("resumeChainOfThoughtProtocol",sendBackProtocol || aiClient._protocol);
+ 	
+                	if( eventStop.wait(0) && !errCode ){ //errCode 为 0 表示未完成，对于中止操作来说是正常的
+                		mainForm.btnSend.text = "继续";
+                	}
+                	else{
+                		mainForm.btnSend.text = "重试";
+                	}
+            	}
+            	else{
+            		//避免旧协议原生状态滞留内存
+            		..thread.set("resumeChainOfThought",null);
+            		..thread.set("resumeChainOfThoughtProtocol",null);
+            		..thread.set("resumeInterruptedMessage",null);
+            		
+            		if(err){
+            			mainForm.btnSend.text = "重试";
+            		}
+            	}
+             	
+            	//任何原因异常中止，稍后自动重试
+            	if(needRetry){
+            		mainForm.scheduleRetry(err); 
+            	}
+            	
+            	if(ok){
+                	var wx = thread.get("fromWeiXinClawBotMessage"); 
+            		var fs = thread.get("fromFeishuMessageId");
+            		
+            		if(wx){
+            	    	thread.set("fromWeiXinClawBotMessage",null);
+            	    	
+            			import web.rest.iLinkClient.login;
+    					var bot,err = web.rest.iLinkClient.login();
+    					if(bot) bot.sendMessage(wx,"在吗？我已经忙完了！");
+            		}
+            		
+            		if(fs){
+            	    	thread.set("fromFeishuMessageId",null);
+            	    	var feishuClientInstance = mainForm.feishuClientInstance;
+            			if(feishuClientInstance) feishuClientInstance.replyMarkdown(fs, "在吗？我已经忙完了！");
+            		}
+            	}
+            	
+            	if(..win[["_form"]]){
+					..win._form.destroyAll();
+				}
+            },io.appData("aardio/autos/workspace/"));
+            
+            var ok,err = fiber.resume(fib);
+            if(!ok){
+            	mainForm.msgboxErr(err||"未知错误")
+            }
+        },chatUi,mainForm,aiChatConfig,config.itemData,eventStop,mainForm.fromWeiXinClawBotMessage,mainForm.fromFeishuMessageId,mainForm.feishuClientInstance,resentCot,shouldInjectImageContext
+    )
+}
+
+chatUi.onComplete = function(success,err,errCode){
+
+	chatUi.assistant(null);//幂等结束 Markdown 流式渲染
+	 
+	mainForm.saveChatMessage();
+	
+	mainForm.btnSend.checked = false;
+	mainForm.btnSend.disabledText = null;
+	mainForm.btnSend.reduce(false);
+	
+	mainForm.btnSend.text = "运行";
+	mainForm.btnSend.iconText = '\uF1B9';
+	
+	mainForm.btnClear.disabled = false; 
+	if(success) {
+		mainForm.retryAttempts = 0;
+		mainForm.editPrompt.setFocus();
+	}
+	
+	if(chatUi.aiChatThread){
+		..raw.closeHandle(chatUi.aiChatThread);	
+		chatUi.aiChatThread = null;	
+	}
+	
+	if(mainForm.stopTimerId){
+		mainForm.clearTimeout(mainForm.stopTimerId);
+		mainForm.stopTimerId = null;
+	}
+	
+	if(taskbar) taskbar.SetProgressState(mainForm.hwnd,0/*_TBPF_NOPROGRESS*/);
+	
+	if(config.playSound){
+		import sys.midiOut;
+		
+		if(success){
+			// 成功：马林巴（木琴系），节奏轻快紧凑，上扬琶音
+            sys.midiOut.play("changeInstrument(13), 5__, 1'__, 3'__", "C4", 120);
+		}
+		elseif( !eventStop.wait(0) /*非用户中止*/ ) {
+			// 失败：低音距的短促木鱼双击，提醒有误且不刺耳
+            sys.midiOut.play("changeInstrument(115), 1_, 1_", "C3", 120);
+		} 
+	}
+}
+
+mainForm.saveChatMessage = function(){ 
+	config.save();
+}
+
+chatUi.external = {
+	alert = function(msg){
+		mainForm.msgbox(msg," 🚗 aardio autos ");
+	};
+	updateApiKey = function(){
+		mainForm.btnSetting.oncommand();
+	};
+	updateSearchKey = function(){
+		var webSearchConfig = fsys.table(io.joinpath(userDataPath,"tavily.table"));
+		var key = mainForm.inputBox("请输入密钥（自动识别 Tavily,Exa 等搜索接口密钥）","AA(aardio autos) - 搜索接口密钥",webSearchConfig.key,,true);
+		if(key){
+			webSearchConfig.key = key;
+			webSearchConfig.save();
+		}
+	};
+	openMemory = function(){
+		raw.explore(io.createDir(io.joinpath(userDataPath,"~memory/")))
+	};
+	showMessage = function(msg){
+		mainForm.showMessage(msg,,true)
+	};
+	importChatMessages = function(){
+		import fsys.dlg;
+		var path = fsys.dlg.open("*.jsonl|*.jsonl|*.json|*.json||","自 jsonl 或 json 文件导入对话");
+		if(!path) return;
+			
+		chatUi.importChatMessagesFromFile(path);
+	};
+} 
+
+mainForm.scheduleRetry = function(err){
+	mainForm.lastApiError = err;
+	
+	var startTick = ..time.tick();
+	mainForm.retryAttempts = math.min((mainForm.retryAttempts : 0) + 1,6);
+	var delay = math.min( 15000 * (2 ** (mainForm.retryAttempts - 1)), 300000 );
+	
+	mainForm.lableMessage.background = 0xFFFFFBE6;
+	mainForm.lableMessage.color = 0xFFD46B08;
+	
+	mainForm.retryTimerId = mainForm.setInterval( 
+		function(){
+			var endTick = ..time.tick()  
+			var remain = endTick - startTick;
+			if(remain>=delay){
+				
+				mainForm.clearTimeout(mainForm.retryTimerId);
+				mainForm.retryTimerId = null;
+				mainForm.lastApiError = null;
+				mainForm.lableMessage.show(false);
+				chatUi.clearErrorMessage();
+				
+				//按钮忙时不能再继续重试（对话历史会冲突），重试优先级不能高于 mainForm.btnSend
+				if(!mainForm.btnSend.busy()){
+					sendApiMessage( !!thread.get("resumeChainOfThought") );
+				}
+				
+        		return 0;
+			}
+			else{
+				mainForm.lableMessage.text = math.round((delay-remain)/60000,2) + " 分钟后自动重试";
+				mainForm.lableMessage.show(true);
+			}
+		},3000 //3 秒无操作再启动
+	)
+}
+
+mainForm.cancelRetry = function(){
+
+    if(mainForm.retryTimerId){
+        mainForm.clearTimeout(mainForm.retryTimerId);
+    }
+
+    mainForm.retryTimerId = null;
+    mainForm.lastApiError = null;
+    mainForm.retryAttempts = 0;
+    mainForm.lableMessage.show(false);
+}
+
+mainForm.btnSend.oncommand = function(id,event){
+	
+	mainForm.cancelRetry();
+	if( mainForm.btnSend.busy() /*mainForm.btnSend.text == "停止"*/){
+		eventStop.set();
+		
+		mainForm.btnSend.checked = true;
+		mainForm.btnSend.disabledText = {'\uF254';'\uF251';'\uF252';'\uF253';'\uF250'}
+		
+		mainForm.stopTimerId = mainForm.setTimeout( 
+			function(){
+				mainForm.stopTimerId = null;
+				
+				if( mainForm.btnSend.text == "停止"){
+				
+					if(chatUi.aiChatThread ){
+						..thread.terminate(chatUi.aiChatThread,0)
+						..raw.closeHandle(chatUi.aiChatThread)
+						chatUi.aiChatThread = null;
+					
+						// 恢复按钮状态
+            			chatUi.onComplete(null); 
+						
+						if( ..thread.get("resumeChainOfThought") ){ 
+							mainForm.btnSend.text = "继续"
+						}
+						else{
+							mainForm.btnSend.text = "重试"
+						}
+					}
+				}
+				
+				return 0;
+			},6000
+		)
+		return;
+	} 
+		
+	if( ..thread.get("resumeChainOfThought") &&
+		( (mainForm.btnSend.text=="继续") || (mainForm.btnSend.text == "重试")) ){
+		//无论是手动中止（"继续"），还是服务端出错中止（"重试"），都需要恢复并续接原来的交错思维链
+		chatUi.clearErrorMessage();
+		sendApiMessage(true);
+	}
+	else{
+		if( mainForm.btnSend.text != "重试" ){
+			mainForm.fromWeiXinClawBotMessage = null;
+			mainForm.fromFeishuMessageId = null;
+		}
+		
+		sendApiMessage();	
+	}
+}
+
+var defaultPrompt = "获取我的公网 IP，然后打开 必应 搜索此 IP";
+mainForm.editPrompt.onFocusGot = function(){
+	if(#defaultPrompt){
+		if(owner.text == defaultPrompt){
+			owner.text = "";
+		}	
+		
+		defaultPrompt = "";	
+	}
+	 
+	if(win.getIdleTime()<2000){
+		mainForm.editPrompt.adjustInputLayout(true);
+		mainForm.cancelRetry();	
+	}
+}
+mainForm.editPrompt.onFocusLost = function(){
+	mainForm.editPrompt.adjustInputLayout(false);
+}
+mainForm.editPrompt.langOptions = 2/*_IMF_AUTOFONT*/;
+
+mainForm.editPrompt.onChange = function(){ 
+	if(!owner.modified) return; //非交互操作或 text,load,save
+	mainForm.cancelRetry(); //用户操作或 selText 等
+}
+
+//回车换行（Ctrl+Enter 发送）
+mainForm.editPrompt.onOk = function(ctrl,alt,shift){
+    if(ctrl){
+        mainForm.btnSend.checked = true;
+        mainForm.btnSend.oncommand(,0/*_BN_CLICKED*/);
+        return true;
+    }
+}
+
+var resetMessages = function(restore){
+
+	//清会话、导入会话或切换配置时不得沿用旧的临时交错思考链。
+	..thread.set("resumeChainOfThought",null);
+	..thread.set("resumeChainOfThoughtProtocol",null);
+	..thread.set("resumeInterruptedMessage",null);
+	chatUi.clear();
+	
+	var tip = /***  
+[AA( aardio autos )](http://aau.cn) - 开源，免费的全自主 AI 智能体（Autonomous Agent）  
+本工具拥有自主编程、调试、操作电脑的能力，使用本工具造成的一切后果自负，如不同意请勿使用！
+
+#### 🚗 起步
+请 <a href="javascript:void(0)" onclick="javascript:external.updateApiKey()" title="打开 API 设置窗口（试试右键点配置名 » 智能粘贴）。请选择支持交错思考（边思考边调用工具）能力的模型。">» 设置接口</a> / [推理强度](http://www.aardio.com/zh-cn/docs/library-guide/std/web/rest/aiChat.html#reasoning) （磨蹭卡壳时调低，粗心草率时调高） [» 新手资源包](http://aau.cn/pack)   
+请 <a href="javascript:void(0)" onclick="javascript:external.updateSearchKey()" title="兼容并自动识别 AI 搜索厂商 Tavily/Exa/Bocha 的密钥格式。设置此密钥 AI 才能具有联网搜索的能力。">» 设置联网密钥</a> （Tavily <a href="https://app.tavily.com/home" target="_blank">注册</a> 免费 1000 次/月）
+
+#### 🚗 技巧
+
+- 输入框按 `Ctrl+Enter`快速发送，`Ctrl+V`粘贴文件或图像附件（点 &#xF030; 截屏，右键清除）
+- `Shift`+&#xF0C5; 复制推理，展开「推理过程」可查看 <a title="AI 调用工具执行的代码仅临时显示在推理过程（不带入下轮对话，重启丢弃）。智能体的默认行为是执行代码而非生成代码。如果需要将代码回复到正文（默认 AI 会自动判断是否有必要这么做），请避免使用可能误导 AI 「仅执行代码」的提示词（或带有类似歧义）。如果需要保存代码到本地文件（这本就是智能体的基本能力）也请明确告知 AI。" href="javascript:void(0)">执行代码</a>，`Ctrl+单击` 或 3 连击快选代码块
+- 中止任务后可点`继续` / `重试`恢复运行（可输入临时纠偏提示词），故障间隔 15秒 $\to$ 5分钟 自动重试
+- 点（ &#xF014; ）按钮清除对话（减负提效），<a title="重启 AA 可恢复最后一次关闭 AA 时自动保存的会话，但会丢弃 AI 推理过程（思考内容）以重新释放上下文窗口。如果 AI 打开控制台（黑窗口）请不要直接关闭（不保证能保存对话）。" href="javascript:void(0)" >正常关闭自动保存</a>，输入框右键 <a href="javascript:void(0)" onclick="javascript:external.importChatMessages()" title="点这里自 json,jsonl 文件导入对话">导入/导出</a> 对话
+- 新建对话或重启程序可重新加载 <a href="javascript:void(0)" onclick="javascript:external.openMemory()" title="点这里打开记忆文件存储目录，main.md 为主记忆，手工操作时请注意备份">长期记忆</a>，可显式要求 AI 写入、清除、切换`主记忆`
+- 可自主按需加载 / 创建技能包（高效复用） [» 技能包仓库](http://aau.cn/skills)
+***/
+	if(!restore) {
+		config.chatMessages = null;
+		config.save();
+		
+		chatUi.write(tip);
+	}
+	else{
+		config.chatMessages =  chatUi.chatMessages;
+		config.save();
+	}
+	
+	var systemPrompt = /*****************
+
+
+## 角色
+
+你是 Autos，高级 aardio 自动编程智能体。
+
+你擅长编写、调试、测试和改进 aardio 代码，
+并可使用工具运行代码、检查文件、搜索文档、自动化操作电脑。
+
+## 要求
+
+- 优先用最短可靠路径验证关键风险；避免无价值的重复探索、冗长解释和不必要的工具调用
+- 必要时应主动调用工具验证关键假设，复杂任务可充分使用工具，关键目标应尽最大能力思考，优先探索高信息增益、能验证关键假设或降低主要风险的方法；必要时可以充分尝试不同路径，但避免无意义的重复试错，避免做无用功。
+- 编程任务请调用工具执行必要的单元测试（验证关键代码、你的想法、思路的可行性）
+- 微信/飞书来源的消息必须用对应工具回复
+
+## 复杂任务开发流程
+
+以下是 default workflow / playbook，不是硬性清单；可按任务复杂度跳过、合并、重排。
+
+1. Align：明确目标、约束、上下文、验收标准（Definition of Done）。若缺失信息可以安全假设，就说明假设并继续；若会显著影响方向或风险，则先用合适工具检索或询问用户；需求先对齐，切忌闭门造车。
+2. Plan：拆分任务，选择技术路线，识别关键风险、依赖、验证方式与必要的回滚/备份策略。
+3. De-risk：优先验证最不确定、最可能阻塞的点；必要时查文档/范例/源码，或构造 minimal repro 验证关键 API、协议、环境差异。
+4. Implement：做最小但完整的有效改动，保持简单、可维护、可回滚；避免无关重构和扩大任务范围。
+5. Validate：运行聚焦的测试或实际验证，观察错误与输出，用结果修正方案；必要时扩大验证范围，直到达到足够置信度。
+6. Deliver：简洁总结已完成内容、验证证据、剩余风险与建议下一步；若任务仍很长，可给出可恢复的 checkpoint / State Summary。
+
+流程是迭代的：Observe » Orient » Decide » Act。请根据证据持续调整计划，尽最大努力交付高质量结果；关键任务不要吝惜必要的推理和验证，但始终避免 busywork。
+
+### 任务边界、Checkpoint 与上下文预算
+
+本节是 soft heuristic / meta-guidance，不是硬性限制；请按当前任务的最佳实践自主权衡。
+
+默认保持 Autonomy：用户的显式目标是 priority anchor，而不是探索上限。为完成目标所需的隐含子任务、短闭环验证（micro-loop）可自主推进；避免 zero-value confirmation，不要机械请示。
+
+避免跑偏：复杂任务中请留意 task boundary / scope creep / context budget。工具调用应优先服务当前目标；若新发现的问题能解除阻塞或显著降低风险，可自主处理；否则先记录为 risk / technical debt / follow-up，避免把相关问题自动升级为当前任务。
+
+分而治之：当你自行判断方向不确定性升高、可能进入 rabbit hole、上下文或思维链明显膨胀、连续行动的边际收益下降，或即将进入高影响新阶段时，可主动结束本次对话以创建“阶段性 checkpoint”。阶段性 checkpoint 的目的不是降低探索性，而是 alignment 与 context compaction。
+
+阶段性 checkpoint 的正文应作为可恢复的 State Summary，简短说明：已确认事项、当前判断或风险、下一步默认方案，或确实需要用户决策的问题。若下一步短小、低风险，且能验证关键假设或完成当前 micro-loop，请继续完成小闭环，不要过度频繁打断或要求用户确认。
+
+## 调试与执行 aardio 代码
+
+使用工具 execute_code 执行 aardio 代码时，你可以：
+
+- 使用 `return` 语句返回你需要的值
+- 自动捕获 `print` 函数的所有输出
+- 调用 `util.testRunner` 执行自动测试，并使用 `return $.report()` 方法收集测试结果
+
+execute_code 同时也是强大的 aardio 代码调试工具，可以捕获并返回编译时错误与运行时错误。
+
+当前系统使用 GUI 界面运行，
+execute_code 工具自动禁用 `console.log(...)` 等试图打开控制台的函数，
+请使用无 UI 打扰的 `print` 或 `return` 替代：
+
+❌ BAD: `console.log(...);` 
+✅ GOOD: `print(...);`
+
+❌ BAD: `console.dumpJson(results);` 
+✅ GOOD: `return results;` 或 `print(results);` 
+
+## CRITICAL — HostPath ≠ GuestVAP
+
+Before authoring code for `execute_code`, type every slash-rooted path:
+
+- **HostPath (H):** used in tool arguments; `/x` resolves from the Autos Workspace.
+- **GuestVAP (G):** used inside executed aardio; `"/x"` resolves to Effective AppBase `E` + `/x`, not Workspace `/x`.
+- **E:** explicit `appBaseDirectory`; otherwise the containing directory of source-file `code`; otherwise Workspace root (`/`). `appBaseDirectory` is itself host-resolved and affects GuestVAP only.
+
+Never copy H into guest code unless E=`/`. User/workspace paths are H unless explicitly labeled GuestVAP. Convert with `G="/" + relative(H,E)`; never include E in G. The same `/x` denotes the same file across both spaces only when E=`/`.
+
+Artifact policy:
+- For standalone/generated code producing files for another tool, prefer `appBaseDirectory="/"`.
+- For AppBase-sensitive code, bind the planned G→H pair before coding: E=`/my-app/`, G=`/snap.png` → H=`/my-app/snap.png`.
+- Any unexpected or repeated prefix is a failed run. Fix the producer path and rerun; never consume an accidental artifact.
+
+## 多动手少空想，多实测少猜测；切莫舍近求远，请积极调用工具
+
+请随时记住你的角色是程序员，你手上有最强大的 execute_code 工具。
+execute_code 工具不仅可以运行正确的代码，也可以调试错误的代码。
+不要基于空想推进任务，请基于工具调用与实测结果推进任务。
+
+## 提示
+
+即使本系统没有提供相关工具，
+你也可以调用 aardio 强大的标准库与 ide 扩展库。
+
+- 获取库路径: `var path,dir = io.libpath(lib)` ,库不存在时返回 null 。创建库时应当硬编码路径 `~/lib/namespace...`（公共库）或  `/lib/namespace...`（用户库）
+- aardio 范例目录:  `~/examples` ，可调用工具 `search_text(path='~/examples')` 搜索范例
+- aardio 调用其他编程语言:  `~/examples/Languages/`，例如 `/examples/Languages/R/`
+- aardio 文档与指南目录: `~/docs/` ，可调用工具 `search_text(path='~/docs')` 搜索文档。文档中的虚拟路径`~/docs/examples/`指向物理路径 `~/examples/`
+- `doc://` 协议: 文档中 `doc://` 链接的根目录为 IDE 目录 `~/docs/`，`doc://examples/` 对应 IDE 目录 `~/examples/` ，`doc://library-references/` 下面的库参考文档则由 ide.doc.libraryMd 动态生成
+- 库文档分为 3 类: 
+	1. 库参考：调用 lookup_library_reference 工具获取，由库源码内智能提示声明（必不可少）生成（基于 ide.doc.libraryMd ）
+	2. 库指南：位于 `~/docs/library-guide` 目录，内置库与部分标准库
+	3. 库文档：位于 `~/docs/library` 目录，扩展库安装的文档
+- 探查库源码: 工具 get_library_source
+- 自动化: 标准库 winex（控制外部窗口）,key（模拟键盘）,mouse（模拟鼠标） 等命名空间
+- 后台模拟点击: `winex.mouse.click(hwnd,x,y)`, `winex.key.click(hwnd,'SPACE')`
+- 进程操作:  process 命名空间
+- 文件操作: fsys 命名空间,io 内置库
+- `import fsys;fsys.delete(path,true/*allowUndo*/)` 安全删除到回收站可用 `import fsys.recycleBin;fsys.recycleBin.restoreLast()` 快速找回
+- 网页自动化: web.view(WebView2) 提供 preloadScript 方法可注入并修改 JS 内置函数，cdp 系列方法也非常有用，也可以利用 waitEle,waitEle2 方法实现 XPath 查询、检测、等待网页元素并回调 JS
+- Markdown 转 HTML: string.markdown 基于 C 组件速度极快，推荐
+- HTML 转 PDF: web.view + cdp('Page.printToPDF')
+- PDF: fsys.pdfium 
+- Word 文档（*.docx）:  标准库 com.doc （基于 `com.TryGetObject('Word.Application','wps.Application')`），兼容 WPS
+- PPT: `com.TryGetObject('PowerPoint.Application', 'WPP.Application')` 创建 COM 对象操作 PPT 幻灯片文件
+- Excel: com.excel ，兼容 WPS
+- 系统自动化: mouse, key, winex, process 库
+- OCR: 标准库自带的 dotNet.ocr 或工具 analyze_image
+- 读写剪贴板: win.clip 命名空间
+- 操作系统版本信息: win.version
+- SYSTEM_INFO 结构体:  sys.info
+- PowerShell: 标准库自带的 dotNet.ps 或工具 process_powershell ；仅在有必要时才使用 PowerShell ，编辑文本或代码请改用 patch_text_file, edit_text_file 等更可靠的工具。
+- CMD/外部进程: 工具 process_popen；代码内可用 process.popen
+- 批处理（*.bat）: process.batch
+- 创建美观的图形界面: 用 plus 控件, skin 方法美化。要求不高的简单图例使用 gdip.chart.bar 等基于 plus 控件的简单图表
+- GDI+ 自绘: plus 控件适合 GDI+ 自绘，例如写见缝插针小游戏、简单动画可能比网页还方便，但 GDI+ 不适合大面积密集绘图或对性能要求高的动画
+- 创建复杂的适合用网页展示的界面:  web.view(WebView2) 加载前端是最佳实践，例如显示数据看板、统计报表用网页非常方便，与 aardio 交互也非常方便。
+- ImTip 超级热键: process.imTip 库，以及超级热键指南（ `~/docs/library-guide/std/key/hotkey.md` ）
+- 调用 .NET 框架或程序集: 标准 dotNet
+- 编译运行 C# 代码: `dotNet.createCompiler('C#')` ，注意 aardio 中的 CLR 编译器最高支持 C# 4.0( .NET 4.0+)/5.0( .NET 4.5+) 语法
+- 调用 WinRT 组件:  dotNet.uwpCompiler，参考 `\examples\Languages\dotNet\WinRT`目录
+- JScript 或 VBScript:  标准库  web.script
+- 现代 JavaScript:  标准库 nodeJs 或 web.view 
+- 调用 Python:  py3 扩展库
+- 调用或编译执行 C 语言，生成 DLL:  tcc 扩展库
+- 调用 HTTP API: aardio 通常不需要专门的 SDK，大多时候只需要 web.rest.jsonClient 或 web.rest.jsonLiteClient，`\examples\Web\REST` 目录下提供了很多示范代码
+
+以上只是部分提示与建议，你可以根据用户需求与最佳实践进一步调研分析、权衡取舍
+
+## 不要过早生成完整代码
+
+反模式：
+
+上来就过早生成完整代码，然后浪费大量时间坑填坑。
+这就好比造房子粗制滥造迅速完工，最后发现一堆问题，不是房子倒了，就是必须砸掉重来。
+
+最佳实践：
+
+先做必要的测试，最后再生成可交付的代码成品。
+就好比造房子先打好地基，一层一层稳步前进，时机成熟再装修与交付成品。
+
+## 测试基于 win.ui(win.form) 的 aardio 图形界面（ GUI ） 
+
+你不能假设当前是无人干扰的会话环境。
+当你运行与测试 aardio 窗口程序时，电脑用户可能无意中操作你运行的界面，或将其切换到后台。
+
+你应当优先优先使用无界面与非阻塞的方式编写测试用例验证关键代码、算法、思路，
+非必要时请避免滥用视觉识别、模拟鼠标键盘等低效的、容易出错的、阻塞的、有界面的方式去验证结果。
+例如编写游戏时你可以调用 util.testRunner 运行无头逻辑测试验证关键的碰撞算法与代码，而不是通过运行后的截图去验证碰撞效果（低效反模式）。
+
+无头像素测试：
+
+```aardio 
+import gdip;
+var bmp = gdip.bitmap(40,30);
+var graphics = gdip.graphics(bmp);
+var brush = gdip.solidBrush(0xFFFF0000);
+
+import util.testRunner;
+var $ = util.testRunner("无头像素测试");
+$.test(graphics.fillCircle(brush,10,10,5),"绘图");
+
+var argb = bmp.getPixel(10,10)/*0xAARRGGBB*/;
+
+// Misfed COLORREF (0xBBGGRR) induces R/B channel swap
+var r,g,b,a = gdi.getRgba(argb);
+
+print(r=r,g=g,b=b,a=a);
+
+$.expect(argb,0xFFFF0000,"检查像素是否填充圆心");
+return $.report();
+```
+
+GUI 冒烟：
+
+```aardio 
+winform.show() //显示窗口
+thread.delay(1000); //先消息泵，后点击截图，注意时序
+
+winform.plus.click(x,y) //模拟点击（发送鼠标按下与弹起消息，x,y 为控件客户区坐标）
+var bmp = winform.plus.snap() //双缓冲截图（依赖 WM_PAINT 消息）
+winform.close() //不进入无限期 win.loopMessage()
+if(bmp){
+	import autos.tools.handlers;
+	var result = autos.tools.handlers.analyze_image({imageUrlOrPath=bmp})
+	bmp.delete();
+	
+	return result;
+}
+```
+
+GUI 冒烟流程（首选）:
+
+- 编写代码并存为 `*.aardio` 源文件
+- 使用工具 execute_code 执行代码；参数 `code` 指定 aardio 代码文件路径；参数 `codeReplacement.oldText` 指定为 `win.loopMessage();`，参数 `codeReplacement.newText` 指定为冒烟测试代码（与手动替换代码等价，可访问局部变量）
+- codeReplacement 仅在执行前内存修改运行时代码，不会改动源文件。
+
+异步线程 GUI 冒烟流程（备选）:
+
+- 用工具 execute_code(threadMode=async) 创建独立界面线程（异步线程里不会替换 win.loopMessage）
+- 你可以调用 `var winform = autos.waitAsyncForm(threadId,timeout/*毫秒*/)` 直接获取最后一次 execute_code(threadMode=async)  创建的首个窗体对象，
+autos.waitAsyncForm 仅返回准备就绪的有效窗体（这指的是窗体有效，创建窗体的线程内 thread.delay 或 win.loopMessage 等消息泵已正常运行且没有发生错误）。可以跨线程调用 winform 的属性方法，或用 `winform.invoke(function(...){var winform = owner;/*不能跨线程传递 upvalue，使用隐式注入的 owner 代替*/},...)` 将函数发送到创建窗口的线程内执行。
+- 你也可以调用 `thread.set("uniqueVarName",value)`存储多线程共享变量，用 `thread.acquire("uniqueVarName",timeout/*毫秒*/)` 跨线程读取。
+
+## 共享浏览器
+
+使用 `web.view.shared({text="title"})` 可在独立线程中创建共享的 WebView2 窗口；相同 `text` 复用同一实例，不同 `text` 可创建不同实例。
+
+- 你不会被 shared 浏览器阻塞对话，因为它是异步的。
+- shared 浏览器可以 持久驻留，可以跨工具调用、跨对话线程，你也可以使用 `wb.close()` 关闭它
+- 你可以跟踪或辅助用户操作 shared 浏览器
+- 你可以跨线程直接调用 wb 对象的属性与方法，例如执行 JavaScript / CDP 命令，探查网页状态，自动化操作
+- 你可以使用 wb.invoke 在创建浏览器界面线程内执行 aardio 代码
+
+示例：
+
+```aardio 
+import web.view;
+
+// wb 只是代理对象
+var wb = web.view.shared(text='shared-demo');
+
+/* 
+wb.invoke 的参数 @1 是字符串则作为 JS 表达式获取并执行 JS 函数（丢弃函数返回值）。
+参数 @1 如果是 aardio 函数对象则会被送回到创建 web.view 的界面线程执行（获取函数返回值）。
+*/
+var result = wb.invoke(
+	function(...){
+		// 在界面线程创建安全的闭包
+		
+		var wb = owner; // 获取真实的 web.view 对象
+		
+		wb.external = {
+    		// JS 绑定的 aardio 回调函数必须在同一界面线程
+			nativeFunction = function(a,b){ 
+				return a+b;
+			} 
+		}
+	}
+)
+
+// 跨线程调用方法或属性
+// wb.go('https://example.com');
+
+wb.html = /***
+<button id="btn" onclick="aardio.nativeFunction(2,3).then(()=>this.innerText='已点击')">点我</button>
+***/
+
+// 等待节点，可指定 XPath 或 CSS 选择器
+wb.waitEle(`//button[@id="btn" and normalize-space(.)="已点击"]`/*,`this.innerText='clicked'`,5000*/);
+
+// wb.close()
+
+return {
+    text = wb.eval("document.getElementById('btn').innerText");
+}
+
+```
+*****************/
+
+	var aiChatConfig = config.itemData[[config.selItem]]
+	if(#aiChatConfig[["systemPrompt"]]){
+		systemPrompt = aiChatConfig.systemPrompt + '\n\n' + systemPrompt;
+	}
+
+	//保持不变以利于构建缓存
+	chatUi.aardioSystem(systemPrompt);
+	
+	//技能包
+	import autos.skills;
+	var systemPrompt = autos.skills.buildRoutePrompt();
+	
+	var lunar;
+	try{
+		import time.lunar;
+		lunar =  '\r\n- 当前农历:' +  tostring(time.lunar());
+	}
+	catch(e){
+		lunar = "";	//兼容 XP 系统
+	}
+
+	//主记忆
+	var mainMemoryPath = io.joinpath(userDataPath,"~memory/main.md")
+	
+	systemPrompt = systemPrompt + "
+
+	
+## 背景
+
+- 当前日期:" + tostring(time(str,"%Y年%m月%d日","chs"))
+	+ '\n- 当前操作系统:"' + ..win.version.format() + '"'
+	+ lunar 
+	+ '\n- aardio 开发环境所在目录:`' +  io.fullpath("~/") + '`'
+	+ '\n- 操作系统临时目录:`' +  fsys.getTempDir() + '`'
+	+ '\n- 你可以自由读写文件的工作区目录:`' +  agentWorkspace + '`，这也是 Tool-Call Space (Host) 的默认`应用程序基准目录`（单个  `/` 或 `\` 开头文件路径的基准目录）。'
+	+ '\n- 本系统名称为: AA( aardio autos ) 版本: ' + autos.version
+	+ '\n- 本系统源代码位于:`' + io.fullpath("~/examples/AI/autos.aardio") + '` 如果用户有需要，你可以改进系统源代码，但需经过用户确认同意。如果用户要求你介绍自己，你可以先读取运行你的这个系统源代码作为参考。'
+	+ '\n- 本系统进程权限:' + (..process.admin.isRunAs() ? "以管理权限启动" : "以普通权限启动") + "。如果你需要以管理权限执行工具或代码，请提醒用户可按住 Shift 键单击 aardio 工具面板顶部的`AA`按钮以管理权限启动 Autos 。"
+	+ '\n\n'	
+	+ "## 长期记忆
+
+### 记忆文件系统
+
+- 长期记忆根文件夹 `" + io.joinpath(userDataPath,"~memory/") + "` 是你的大脑。
+- main.md 是你的主记忆，创建会话时自动加载，阶段性成果/大坑教训应使用 write_memory 写入主记忆。
+- 除 main.md 以外的其他记忆文件则用于保存记忆分枝。
+
+但应当控制写入长期记忆的频率，避免过度频繁地写入长期记忆。
+几乎没有可重用价值的信息（对以后的对话和任务几乎没有帮助）不应当写入长期记忆。
+写入主记忆不会影响当前上下文，只有用户清除当前会话并创建新会话时才会加载新的主记忆。
+
+### 整理与修剪主记忆
+
+当前主记忆文件（main.md）的体积:" + math.size64(io.getSize(mainMemoryPath)).format() + "，超过 40KB 你应当在会话结束前整理与修剪主记忆（调用工具 read_memory 读取最新的主记忆，然后调用工具 write_memory 替换主记忆文件）。
+
+整理与修剪主记忆的原则是丢弃对任务推进没有价值的信息，归纳整理并保留有价值的知识、技能与重要记忆，暂时不需要的记忆可以存为其他分枝记忆文件（在主记忆中记录其路径与摘要）。
+
+如果项目切换或者用户要求，可以调用工具 switch_memory 备份并切换主记忆。
+
+### 利用长期记忆分解并逐步完成复杂任务
+
+避免在一次对话中完成复杂的任务的所有步骤。
+你应当做好规划，分而冶之，把复杂的任务目标拆分为可以逐个完成的简单小目标。
+在长期记忆中记录复杂任务的规划、步骤，以及需要逐个攻克的难点。
+每次完成一个小目标或里程碑并结束对话时你应当将重要的信息、研究成果、任务进度、下一步建议执行的任务写入长期记忆。
+即使用户清除对话上下文，你仍然可以使用长期记忆继续推进项目，不会遗忘重要的信息。
+
+### 刷新主记忆
+
+在用户创建新对话（清除原对话）或重启 Autos （保留原对话）时都会自动读取新的主记忆（注入系统提示词）。
+
+在用户清除上下文并新建对话之前，继续原对话不会重新读取新的主记忆（这是为了重用大模型 API 的前缀缓存）。
+
+因此增量写入主记忆的重要信息你也要输出到回复正文（除非在上下文中已存在）。
+";
+
+	if(..io.exist(mainMemoryPath)){
+		var main = string.load(mainMemoryPath)
+		if(main) systemPrompt = systemPrompt + '\n\n\n---\n\n\n以下是你之前记录的长期记忆和关键信息（主记忆 main.md）。\n\n'+main;
+	}
+	
+	chatUi.system(systemPrompt);
+	//assert(#chatUi.chatMessages===2);//超长而自动清理时最多保留头部 2 个系统提示词
+
+	mainForm.btnSend.text = "运行";
+}
+
+import web.rest.aiChat.settingForm;
+mainForm.btnSetting.oncommand = function(id,event){
+	mainForm.cancelRetry();
+	
+	table.assign(config,{
+		title = "AA( aardio autos ) - 设置"; // 标题  
+		hyperlink1Title = "获取 key"; // key 输入框显示嵌入链接
+		f1Title = "允许使用此接口的视觉能力";
+		f1MultiSelect = true;
+		allowKatex = true;//Win10+
+	});
+		
+	//打开 AI 设置窗口，参数 2 指定配置文件
+	var frmSetting = web.rest.aiChat.settingForm(mainForm,config);
+
+	//== AA-BRIDGE PATCH(2/4): 设置窗注入「外部桥」开关（位于公式框与保存按钮之间空位）==
+	try{
+		frmSetting.add(
+		chkBridge={cls="checkbox";text="外部桥";left=410;top=535;right=488;bottom=555;db=1;dr=1}
+		);
+		frmSetting.chkBridge.checked = AA_BRIDGE_CFG.enabled === true;
+		frmSetting.chkBridge.oncommand = function(id,event){
+			var on = frmSetting.chkBridge.checked;
+			AA_BRIDGE_CFG.enabled = on;
+			try{
+				var t = fsys.table( io.appData("aardio/autos/aa-bridge.table") );
+				t.enabled = on; t.token = AA_BRIDGE_CFG.token; t.save();
+			}
+			catch(e){}
+			if( on ){
+				if( mainForm.aaBridgeStart ) mainForm.aaBridgeStart();
+			}
+			else{
+				if( mainForm.aaBridgeStop ) mainForm.aaBridgeStop();
+			}
+		}
+	}
+	catch(e){}
+
+	//用户点击了「保存」 			
+	if( frmSetting.doModal(mainForm) ){ 
+		mainForm.cancelRetry();
+		
+		//获取用户当前选择的配置
+		var configItem = config.itemData[config.selItem]; 
+		if(configItem){
+			
+			if( configItem.model && configItem.key ){
+				
+				var cretePromptCacheKey = function(){
+					import crypt;
+					return crypt.sha256( configItem.key + ".aardio.autos." + io._exepath);
+				}
+				
+				if( string.find( configItem.model,"!\wgpt!\W") 
+					|| (string.find( configItem.model,"!\wgrok!\W") &&(configItem.protocol==="responses") )){
+			
+					if(configItem.extraHeaders[["x-grok-conv-id"]]){
+						configItem.extraHeaders = null;
+						config.save();
+					}
+						
+					configItem.extraParameters = ..table.mix( configItem.extraParameters,{
+						prompt_cache_key = cretePromptCacheKey();
+					})
+					
+					config.save();
+				}
+				else{
+					
+					if(configItem.extraParameters[["prompt_cache_key"]]){
+						configItem.extraParameters = null;
+						config.save();
+					}
+				
+					if( string.find( configItem.model,"!\wgrok!\W") ){
+				
+						if( type(configItem.extraHeaders)!="table"){ 
+							configItem.extraHeaders  = {
+								"x-grok-conv-id" = cretePromptCacheKey();
+							}
+							config.save();
+						}
+					}
+					elseif(configItem.extraHeaders[["x-grok-conv-id"]]){
+						configItem.extraHeaders = null;
+						config.save();
+					}
+				}
+			}
+					
+			aiChatConfig = table.assign({},configItem); 
+			if(!chatUi.started()){
+ 				resetMessages(); 
+ 			} 
+		} 
+	}
+}
+
+mainForm.btnClear.oncommand = function(id,event){
+	mainForm.btnSend.disabled = true;
+	
+	mainForm.cancelRetry();
+
+	if(chatUi.aiChatThread){
+		..thread.terminate(chatUi.aiChatThread,0)
+		..raw.closeHandle(chatUi.aiChatThread)
+		chatUi.aiChatThread = null;
+	}
+
+	io.close();
+	resetMessages();//清除聊天上下文
+	
+	//清除附件图像
+	var oldBmp = mainForm.btnImageAttachment.setForeground(null);
+	if(oldBmp) oldBmp.delete();
+	mainForm.btnImageAttachment.newImageAttached = null;
+	mainForm.btnImageAttachment.iconText = '\uF030';
+	
+	mainForm.editPrompt.setFocus();
+	mainForm.showMessage("✅ 已重新读取并刷新主记忆 ……");
+	
+	mainForm.btnSend.disabled = false;
+}
+
+mainForm.btnCopy.oncommand = function(id,event){
+	var md;
+	if(::GetKeyState(0x10/*_VK_SHIFT*/) & 0x8000){
+		md = chatUi.getMarkdown();
+		md = string.replace(md,`^.+\<span class="chat-role assistant"\>(.+?)\</span\>\s*`,``,1);
+		md = string.replaceLiteral(md,`<span></span>`,``);
+		
+		if(::GetKeyState(0x11/*_VK_CTRL*/) & 0x8000){
+			if(string.indexOf(md,"<details><summary>推理过程</summary><blockquote>")){
+				md = '分析以下 AI 的思考过程，理一理他在纠结一些什么，踩了哪些坑：\n\n---\n\n' + md;
+			}
+		}
+	}
+	else{
+		md = chatUi.lastAssistantMessage(true)
+	}
+	
+	if(!#md) return mainForm.msgboxErr("未复制任何内容，AI 回复内容为空！");
+	
+	win.clip.write( string.crlf(md,'\r\n') );
+	mainForm.btnCopy.disabledText = {'\uF254';'\uF251';'\uF252';'\uF253';'\uF250';text=''} 
+	thread.delay(800);
+	mainForm.btnCopy.disabledText = null;
+}
+
+mainForm.weixinSendMessage = function(fromMsg,textContent,final){
+
+	if(mainForm.btnSend.busy()){
+		thread.set("fromWeiXinClawBotMessage",fromMsg); 
+		return "抱歉我正在思考，等我忙完立即联系您。";
+	}
+	elseif(mainForm.retryTimerId){
+		return "抱歉我正在执行重试任务，当前故障：`" + (mainForm.lastApiError||"") + "`";
+	}
+	else{
+		mainForm.fromFeishuMessageId = null;
+		mainForm.fromWeiXinClawBotMessage = fromMsg;
+		
+		if(!final){
+			chatUi.prompt(textContent,,true/*暂不发送到界面*/);
+			config.chatMessages = chatUi.chatMessages;
+			mainForm.saveChatMessage();
+		}
+		else{  
+			sendApiMessage(false,textContent); 
+		}
+	}	
+}
+
+// 飞书消息处理函数
+mainForm.feishuSendMessage = function(messageId,requestText,attachmentNotice){
+	if( mainForm.fromFeishuMessageId == messageId ){
+		return mainForm.btnSend.busy()?"我正在思考 ……":null;
+	}
+	
+	if(mainForm.btnSend.busy()){
+		thread.set("fromFeishuMessageId",messageId);
+		return "抱歉我正在思考，等我忙完立即联系您。";
+	}
+	elseif(mainForm.retryTimerId){
+		return "抱歉我正在执行重试任务，当前故障：`" + (mainForm.lastApiError||"") + "`";
+	}
+	else{
+		mainForm.fromWeiXinClawBotMessage = null;
+		mainForm.fromFeishuMessageId = messageId;
+		
+		if(attachmentNotice){
+			chatUi.prompt(attachmentNotice,,true);
+			
+			config.chatMessages =  chatUi.chatMessages;
+			mainForm.saveChatMessage();
+		}
+		
+		if(requestText){
+			sendApiMessage(false,requestText); 
+		}
+	}	
+}
+
+import win.debounce;
+var hideMessage = win.debounce(
+	function(){
+		mainForm.lableMessage.show(false);
+	},3000);
+	
+mainForm.lableMessage.orphanWindow(true);
+mainForm.showMessage = function(content,msgType,popup){
+	if(!content){
+		mainForm.lableMessage.show(false);
+		return ;
+	}
+	
+	if(mainForm.btnSend.busy() || popup){
+		content = string.replace(content,'\r?\n'," ");
+		 mainForm.lableMessage.color = 0xFFFFFFFF;
+		if(msgType=="error") {
+            mainForm.lableMessage.background = 0xFFF56C6C;
+        }
+        elseif(msgType=="loading") {
+            mainForm.lableMessage.background = 0xFF409EFF;
+        }
+        else/*if(msgType=="success")*/{
+           mainForm.lableMessage.background = 0xFF67C23A;
+		}
+		
+		mainForm.lableMessage.text = content;
+		mainForm.lableMessage.show();
+		hideMessage();
+	}
+	else{
+		var overwrite = !chatUi.started();
+		
+		if(msgType=="error") chatUi.errorMessage(content,overwrite);
+		elseif(msgType=="loading") chatUi.showLoading(content,overwrite);
+		else/*if(msgType=="success")*/ chatUi.successMessage(content,overwrite); 
+	} 
+}
+
+mainForm.editPrompt.oleCallback(
+	
+	
+	GetDragDropEffect = function(drag,grfKeyState,effect){
+		return 0,1/*_DROPEFFECT_COPY*/
+	};
+
+	QueryAcceptData = function(ptrDataObj,format,reco,really,hMetaPict){
+	
+		if(really){
+			
+			var dataObj = com.interface.IDataObject(ptrDataObj);
+			
+			
+			if(dataObj.isText()){
+				var txt = dataObj.getText();
+				if(txt){
+					var b,e = mainForm.editPrompt.getSel();
+					if(!e) mainForm.editPrompt.setSel(-1);
+					
+					if(..string.match(txt,"^\s*<%\{\}>|<%\[\]>\s*$") && ..string.indexOf(txt,'\n') ){
+						if(JSON.tryParse(txt)){
+							txt = '\r\n```json\r\n'+txt+'\r\n```\r\n';
+						}
+					}
+					
+					mainForm.editPrompt.selText = txt;	
+				}
+			}
+			elseif( dataObj.isFile()){
+				var files = dataObj.getDropFile();
+				if(#files){
+					mainForm.editPrompt.setSel(-1);
+					mainForm.editPrompt.selText = " `" + string.join(files,",")+"` ";
+				}
+			}
+			elseif( dataObj.isBitmap()){
+				var bmp = dataObj.getBitmap();
+				if(bmp){
+					var oldBmp = mainForm.btnImageAttachment.setForeground(bmp);
+					if(oldBmp) oldBmp.delete();
+					
+					mainForm.btnImageAttachment.newImageAttached = true;	
+					mainForm.btnImageAttachment.iconText = null;	
+				}
+			}
+			
+			/*返回 0 继续默认处理，文本放入控件，返回 _S_FALSE 阻止默认处理。*/
+			return 1/*_S_FALSE*/
+		}
+		
+		return 0; 
+	};
+	
+	GetContextMenu = function(selType,oleObj,charRange){
+		mainForm.cancelRetry();
+		
+		var menuItems = {
+			{ /*分隔线*/ };
+				
+				{ '导入对话';  function(id){
+					import fsys.dlg;
+					var path = fsys.dlg.open("*.jsonl|*.jsonl|*.json|*.json||","自 jsonl 或 json 文件导入对话");
+					if(!path) return;
+					
+					chatUi.importChatMessagesFromFile(path);
+				}; mainForm.btnSend.busy() ? 1/*_MF_GRAYED*/ : 0}; 
+				
+				{ "导出对话";  function(id){
+					import fsys.dlg;
+					var path = fsys.dlg.save("*.jsonl|*.jsonl|*.json|*.json||","导出对话到 *.jsonl");
+					if(!path) return;
+					
+					var file,err = io.file(path,"w+b");
+					if(!file) return mainForm.msgboxErr(err);
+			 		
+					var chatMessages = chatUi.chatMessages;
+					
+					if(..string.endsWith(path,".jsonl",true)){
+						for(i=1;#chatMessages;1){
+							var msg = chatMessages[i]
+							var line  = JSON.stringify(msg,false,false);
+							line = string.crlf(line,"")
+							file.write(line,'\r\n');
+						}
+					}
+					else {
+						file.write((JSON.stringifyArray(chatMessages,true,false)));
+					}
+					
+					file.close();
+					
+				}; #chatUi.chatMessages<3 ? 1/*_MF_GRAYED*/ : 0
+			}; 
+		}
+		
+		mainForm.editPrompt.popMenu(menuItems);
+	};
+)
+
+var weixinListeningThread;
+var weixinTokenPath;
+mainForm.btnWeixin.oncommand = function(id,event){
+	mainForm.cancelRetry();
+	
+	import web.rest.iLinkClient.login;
+	
+	if(!mainForm.btnWeixin.checked){
+		if(weixinListeningThread){
+			thread.terminate(weixinListeningThread,0)
+			raw.closeHandle(weixinListeningThread);
+			weixinListeningThread = null;
+		}
+		
+		if(weixinTokenPath){
+			io.remove(weixinTokenPath)
+			weixinTokenPath = null;
+		}
+		
+		mainForm.showMessage("✅ 微信机器人已断开连接，再次点击微信图标重新扫码连接。");
+		return;
+	}
+	
+	var bot,err = web.rest.iLinkClient.login(parent=mainForm;text="使用微信连接 aardio autos");
+	if(bot) mainForm.showMessage('✅ 微信机器人已上线，可接收 / 发送文本、图片、文件 ... 再次点击微信图标断开连接。');
+	else {
+		if(#err ) mainForm.msgboxErr( err );
+		mainForm.btnWeixin.checked = false;
+		return;
+	}
+	
+	weixinTokenPath = bot.config.tokenPath;
+	weixinListeningThread = thread.create( 
+		function(mainForm,chatUi){
+			import autos.weixinClient;
+			autos.weixinClient(mainForm,chatUi);	
+		},mainForm,chatUi
+	)
+}
+
+// 飞书配置和连接
+var feishuClient;
+var feishuConfig = fsys.table(io.joinpath(userDataPath,"feishu.table"));
+
+var frmFeishu;
+mainForm.feishuOnReady = function(){
+	feishuClient = mainForm.feishuClientInstance;
+	mainForm.btnFeishu.checked = true;
+	if(frmFeishu && frmFeishu.valid){ 
+		frmFeishu.setStatus("已连接", 0x00AA00);
+		frmFeishu.close();
+	}
+	
+	mainForm.btnFeishu.checked = true;
+	mainForm.showMessage('✅ 飞书机器人已上线，可接收 / 发送文本、图片、文件 ... 再次点击飞书图标断开连接。');
+}
+
+mainForm.feishuOnError = function(err){
+	if(!mainForm.btnFeishu.checked && (frmFeishu && frmFeishu.valid)){
+		frmFeishu.setStatus("连接失败：" + (err || "未知错误"), 0xFF0000);
+		frmFeishu.btnConnect.disabled = false;
+	}
+}
+
+mainForm.feishuOnClose = function(reason){
+	feishuClient = null;
+	mainForm.feishuClientInstance = null;
+	mainForm.btnFeishu.checked = false;
+}
+
+mainForm.btnFeishu.oncommand = function(id,event){
+	mainForm.cancelRetry();
+	
+	import web.feishu.settingForm;
+	
+	// 如果已连接，断开连接
+	if(!mainForm.btnFeishu.checked && feishuClient){
+		feishuConfig.autoConnect = false;
+		feishuConfig.save();
+		
+		feishuClient.stop();
+		feishuClient = null;
+		mainForm.feishuClientInstance = null;
+		mainForm.btnFeishu.checked = false;
+		mainForm.showMessage("✅ 飞书机器人已断开连接，再次点击重新连接。","success");
+		return;
+	}
+	
+	
+	mainForm.btnFeishu.checked = false;
+	
+	// 打开配置窗口
+	frmFeishu = web.feishu.settingForm(mainForm, feishuConfig);
+	
+	// 连接回调
+	frmFeishu.onConnect = function(appId, appSecret){
+		frmFeishu.setStatus("正在连接...", 0x0078D4);
+		frmFeishu.btnConnect.disabled = true;
+		
+		thread.invoke(
+			function(mainForm, chatUi, appId, appSecret){
+				import win.ui;
+				import autos.feishuClient;
+	
+				mainForm.showMessage("✅ 飞书机器人正在连接","loading");
+				
+				var client = autos.feishuClient(mainForm, chatUi, appId, appSecret);
+				mainForm.feishuClientInstance = client;
+				
+				client.start();
+				win.loopMessage();
+			}, mainForm, chatUi, appId, appSecret
+		);
+	}
+	
+	frmFeishu.doModal();
+}
+
+if(feishuConfig.autoConnect && feishuConfig.appId && feishuConfig.appSecret ){
+	mainForm.btnFeishu.checked = true;
+	
+	thread.invoke(
+		function(mainForm, chatUi, appId, appSecret){
+			import win.ui;
+			import autos.feishuClient;
+
+			mainForm.showMessage("✅ 飞书机器人正在连接","loading");
+			
+			var client = autos.feishuClient(mainForm, chatUi, appId, appSecret);
+			mainForm.feishuClientInstance = client;
+			
+			client.start();
+			win.loopMessage();
+		}, mainForm, chatUi, feishuConfig.appId, feishuConfig.appSecret
+	);	
+}
+
+mainForm.onDestroy = function(){
+
+	try{ if( AA_BRIDGE_SERVER ) AA_BRIDGE_SERVER.stop() }catch(e){} //== AA-BRIDGE PATCH(3/4): 退出停服 ==
+
+    if(mainForm.feishuClientInstance){
+    	mainForm.feishuClientInstance.stop();
+    	mainForm.feishuClientInstance = null;
+    }
+    feishuClient = null;
+       
+    if(weixinListeningThread){
+    	..thread.terminate(weixinListeningThread,0)
+    	..raw.closeHandle(weixinListeningThread);
+    	weixinListeningThread = null;
+    }
+    
+    eventStop.set();
+    if(chatUi.aiChatThread){
+    	if(!..thread.wait(chatUi.aiChatThread,200)){
+    		..thread.terminate(chatUi.aiChatThread,0);
+    	}
+    	..raw.closeHandle(chatUi.aiChatThread);
+    	chatUi.aiChatThread = null;
+    }
+    
+    mainForm.saveChatMessage();
+}
+
+chatUi.importChatMessagesFromFile = function(path){
+
+	var json = string.load(path);
+	if(!#json){
+		return mainForm.msgboxErr("无效对话数据")
+	}
+	
+	var messages;
+	
+	if(..string.endsWith(path,".jsonl",true)){
+		messages = JSON.ndParse(json);
+	}
+	else {
+		messages = JSON.tryParse(json);
+	}
+	
+	
+	if(!#messages){
+		return mainForm.msgboxErr("无效对话数据")
+	}	
+	
+	chatUi.importChatMessages(messages)
+}
+
+chatUi.importChatMessages = function(messages){
+	mainForm.cancelRetry();
+	
+	mainForm.btnClear.disabled = true;
+	mainForm.btnSend.disabled = true;
+	mainForm.btnSetting.disabled = true;
+	mainForm.showMessage("✅ 正在刷新主记忆 + 恢复会话 ……");
+	
+	resetMessages(true);
+	
+	var last = messages[#messages];
+	if((last[["role"]]=="assistant") && (!#last.content)){ 
+		table.pop(messages);
+	}
+
+	for(i=1;#messages;1){
+		var msg = messages[i];
+		
+		if(type(msg.content)!="string"){
+			 
+			if(msg[["role"]]!="user"){
+				//resetMessages();
+				break;
+			}
+			elseif(!..table.isArrayLike(msg.content)){
+				//resetMessages();
+				continue;
+			}
+		} 
+		
+		if(msg[["role"]]=="system"){
+			if(i<= #chatUi.chatMessages){
+				continue;
+			}
+			chatUi.system(msg.content)
+		}
+		elseif(msg[["role"]]=="user"){
+			if(i<#messages){
+				chatUi.promptOnce(msg.content)
+			}
+			else{
+				mainForm.editPrompt.text = msg.content;
+			}
+		}
+		elseif(msg[["role"]]=="assistant"){
+			
+			var content = msg.content;  
+			if(#content) chatUi.assistantOnce(content);
+		}
+		else {
+			resetMessages();
+			break;
+		} 
+	} 	
+	
+	config.save();
+	mainForm.showMessage(false);
+	
+	mainForm.btnClear.disabled = false;
+	mainForm.btnSend.disabled = false;
+	mainForm.btnSetting.disabled = false;	
+}
+
+mainForm.btnSend.disabled = true;	
+if(config.chatMessages){
+	chatUi.importChatMessages(config.chatMessages);
+}
+else{
+	resetMessages();
+	
+	if(mainForm.editPrompt.hwnd!=win.getFocus()){
+		mainForm.editPrompt.text = defaultPrompt
+	}
+}
+mainForm.btnSend.disabled = false;	
+
+mainForm.createHbitmapFromAttachment = function(){
+	var bmp = mainForm.btnImageAttachment.foreground;
+	if(type(bmp)==="table") return bmp.copyHandle();
+}
+
+mainForm.btnImageAttachment.onRightMouseUp = function(wParam,lParam){
+	var oldBmp = mainForm.btnImageAttachment.setForeground(null);
+	if(oldBmp) oldBmp.delete();
+	mainForm.btnImageAttachment.iconText = '\uF030';
+}
+
+mainForm.btnImageAttachment.oncommand = function(id,event){
+	mainForm.cancelRetry();
+	mainForm.show(0);
+	thread.delay(100);
+	
+	import gdip.snap;
+	import mouse.screenArea;
+	var screenArea = mouse.screenArea();
+	screenArea.onSelectionChanged = function(rc){
+		mainForm.btnImageAttachment.iconText = null;
+		
+		mainForm.btnImageAttachment.newImageAttached = true;	
+		var oldBmp = mainForm.btnImageAttachment.setForeground( (gdip.snap(screenArea.hwnd,rc)) );
+		if(oldBmp) oldBmp.delete();
+		
+		owner.endModal(true);
+		
+		mainForm.editPrompt.setFocus();
+	}
+	
+	screenArea.doModal();
+	
+	mainForm.show(5/*_SW_SHOW*/);
+}
+
+mainForm.customChat.translateAccelerator = function(msg){
+	if (   (msg.message == 0x100/*_WM_KEYDOWN*/) || (msg.message == 0x101/*_WM_KEYUP*/) ) {
+		var vk = msg.wParam;
+		if( vk == 0x74/*_VK_F5*/ ){
+			import ide;
+			ide.run();
+			return true;   
+		}
+		
+		if(( vk == 'N'# ) && ( ( ::GetKeyState(0x11/*_VK_CTRL*/) & 0x8000 ) == 0x8000 )) 
+		{
+			return true;   
+		} 
+	}  
+	return chatUi._host.tranacc(msg)
+}  
+
+import win.ui.accelerator;
+var accelerator = win.ui.accelerator([
+    {
+        vkey = 0x74/*_VK_F5*/;
+        oncommand = function() {import ide;ide.run(); }
+    };
+],mainForm );
+
+//================= AA-BRIDGE PATCH(4/4): 内嵌 HTTP 桥（/api/* + /mcp，127.0.0.1）=================
+//运行模型：本块在 UI 线程执行（定义跨线程辅助入口 + 按 aa-bridge.table.enabled 决定是否启动服务）；
+//请求处理在 simpleHttpServer 的工作线程池。aaBridgeApp 会被 marshal 到工作线程执行 ⇒ 函数体自包含：
+//仅可依赖 threadGlobal 注入的 mainForm/chatUi、闭包捕获的局部变量、aardio 标准库；全局量在工作线程不存在。
+import wsock.tcp.simpleHttpServer;
+
+if( !#AA_BRIDGE_CFG.token ){
+	AA_BRIDGE_CFG.token = "aa" ++ tostring( time.tick() ) ++ tostring( math.random(100000,999999) );
+	try{
+		var t = fsys.table( io.appData("aardio/autos/aa-bridge.table") );
+		t.token = AA_BRIDGE_CFG.token; t.save();
+	}
+	catch(e){}
+}
+
+//──── UI 线程侧：跨线程辅助入口（工作线程经 mainForm 代理调用；weixinClient 同款，阻塞取返回值）────
+mainForm.aaMcpGetStatus = function(){
+	return {
+		bridge = thread.get("(AABRIDGE_ON)") == true;
+		busy = mainForm.btnSend.busy();
+		buttonText = mainForm.btnSend.text;
+		retrying = mainForm.retryTimerId != null;
+		lastApiError = mainForm.lastApiError;
+		messageCount = #chatUi.chatMessages;
+		title = mainForm.text;
+		port = AA_BRIDGE_PORT;
+		pid = ::Kernel32.GetCurrentProcessId();
+		version = autos.version;
+	};
+}
+mainForm.aaMcpGetReply = function(){
+	return { reply = chatUi.lastAssistantMessage(true) };
+}
+mainForm.aaMcpStop = function(){
+	if( mainForm.btnSend.busy() ){
+		mainForm.btnSend.oncommand(,0);  //busy 分支 = 请求停止（内置强杀计时）
+		return { stopping = true };
+	}
+	return { stopping = false; comment = "当前空闲" };
+}
+
+//──── 服务启停（UI 线程；设置窗复选框、开机自启、远程 shutdown 共用）────
+AA_BRIDGE_SERVER = null;
+mainForm.aaBridgeStop = function(){
+	if( !AA_BRIDGE_SERVER ) return;
+	try{ AA_BRIDGE_SERVER.stop() }catch(e){}
+	AA_BRIDGE_SERVER = null;
+	thread.set("(AABRIDGE_ON)",false);
+	mainForm.text = AA_BRIDGE_BASETITLE;
+	mainForm.showMessage("外部桥已关闭");
+}
+mainForm.aaBridgeStart = function(){
+	if( AA_BRIDGE_SERVER ) return;
+	if( !#AA_BRIDGE_CFG.token ) return;
+
+	var bridgePort = AA_BRIDGE_PORT;   //仅 UI 线程使用；工作线程拿不到闭包变量（marshal 只传字节码），token 经 threadGlobal 注入
+
+	var aaBridgeApp = function(response,request,session){
+
+		//──── 安全：token 门禁（本服务只绑 127.0.0.1，再校验 X-AA-Token）────
+		//aaBridgeToken 由 threadGlobal 注入工作线程（闭包变量跨线程不可见）
+		var tk = request.headers[["x-aa-token"]];
+		if( !aaBridgeToken || (tk != aaBridgeToken) )
+			return response.errorStatus(401,"bad or missing X-AA-Token",true);
+
+		//──── 直通黑名单（用户拍板 2026-09-10：ide_* 放开加护栏；微信/飞书未配置屏蔽；
+		//      普通文件/进程/http_get 屏蔽——zcode 原生已覆盖，仅保留下载与 GitHub 两套）────
+		var allowAll = false;
+		var exclude = { "weixin_send_message";"weixin_send_file";"feishu_send_message";"feishu_send_file";
+			"list_directory";"read_text_file";"save_files";"load_string";"search_text";
+			"patch_text_file";"edit_text_file";"rollback_text_file";"clean_backup_text_files";
+			"process_popen";"process_execute";"process_powershell";
+			"http_get" };
+
+		var writeJson = function(obj,status){
+			response.contentType = "application/json";
+			var s = JSON.stringify(obj);
+			response.headers["Content-Length"] = #s;
+			response.status = status : 200;
+			response.write(s);
+			response.close(true);
+		}
+		var isExcluded = function(name){
+			for(i=1;#exclude;1){ if(exclude[i]==name) return true; }
+		}
+
+		//──── ide_replace_code 护栏：活动编辑器若为 AA 源码则拒绝替换（用户铁律：禁止修改 AA 源码）────
+		//判定法：沿编辑器控件父窗口链读标题，命中 AA 入口文件名 / 副本目录 / lib\autos 即拒绝
+		var ideGuardAllowReplace = function(){
+			import ide;
+			import winex;
+			var editor = ide.getActiveCodeEditor();
+			if(!editor) return false;   //无活动编辑器时拒绝：禁止 handler 静默新建文档写入（2026-09-10 实测教训）
+			var hwnd = editor.hwnd;
+			if(!hwnd) return true;
+			var getParent = ::User32.api("GetParent","addr(addr)");
+			var p = hwnd;
+			for(i=1;8;1){
+				p = getParent(p);
+				if(!p) break;
+				var t = "";
+				try{ t = winex.getText(p,260) : "" }catch(e){}
+				if(#t){
+					var lt = string.lower(t);
+					if( string.find(lt,"autos\.aardio") || string.find(lt,"aa-bridge") || string.find(lt,"\\lib\\autos\\") ) return false;
+				}
+			}
+			return true;
+		}
+
+		//──── 工具清单（38 个 autos 工具 + 4 个 aa_* 元工具）────
+		var listTools = function(){
+			import autos.tools.schemas;
+			var tools = {
+				{ name="aa_status"; description="查询 AA 智能体状态：桥/忙闲/重试中、会话消息数、最近错误、PID";
+				  inputSchema={type="object";properties={}} };
+				{ name="aa_read_reply"; description="读取 AA 最近一条助手回复(Markdown)";
+				  inputSchema={type="object";properties={}} };
+				{ name="aa_stop"; description="请求 AA 中止当前任务(等价于点『停止』)";
+				  inputSchema={type="object";properties={}} };
+			};
+			for(i=1;#autos.tools.schemas;1){
+				var f = autos.tools.schemas[i][["function"]];
+				if( f && ( allowAll || !isExcluded(f.name) ) )
+					table.push(tools,{name=f.name;description=f.description;inputSchema=f.parameters});
+			}
+			return { tools = tools };
+		}
+
+		//──── 工具调用（aa_* 走 UI 线程代理；其余 38 个直通 handlers，aiChat 库同款调用约定）────
+		var callTool = function(name,args){
+			select(name) {
+				case "aa_status" { return mainForm.aaMcpGetStatus(),false; }
+				case "aa_read_reply" { return mainForm.aaMcpGetReply(),false; }
+				case "aa_stop" { return mainForm.aaMcpStop(),false; }
+				else {
+					if( !allowAll && isExcluded(name) ) return null,false;
+					if( name=="ide_replace_code" && !ideGuardAllowReplace() )
+						return {error="已按「禁止修改 AA 源码」护栏拒绝：当前活动编辑器疑为 AA 源码（autos.aardio / lib\\autos / aa-bridge）。请先 ide_new_code 新建文档或切换到其他编辑器再试。"},true;
+					import autos.tools.handlers;
+					if(!thread.get("(AAMCP_HANDLERS_INITED)")){
+						var cfg;
+						try{ cfg = eval( string.load(io.appData("aardio/autos/agent.table")) ) }
+						catch(e){ cfg = null }
+						cfg = cfg : {};
+						autos.tools.handlers.__init__(null,{
+							aiChatConfig = cfg[["itemData"]][[cfg[["selItem"]]]] : {};
+							aiConfigItems = cfg[["itemData"]];
+							chatUi = chatUi; mainForm = mainForm;
+						});
+						thread.set("(AAMCP_HANDLERS_INITED)",true);
+					}
+					var f = autos.tools.handlers[name];
+					if(!f) return null,false;
+					return f(args),false;
+				}
+			}
+		}
+
+		var withBusy = function(fn){
+			if(thread.get("(AAMCP_TOOLS_BUSY)"))
+				return null,{code=-32000;message="another tools/call is running, retry shortly"};
+			thread.set("(AAMCP_TOOLS_BUSY)",true);
+			var result,isErr;
+			try{ result,isErr = fn(); }
+			catch(e){ result,isErr = {error=tostring(e)},true; }
+			thread.set("(AAMCP_TOOLS_BUSY)",null);
+			return result,isErr;
+		}
+
+		//──── MCP 协议层（streamable HTTP 2025-06-18：POST 全回 application/json，通知 202，GET/DELETE 405）────
+		var mcpHandle = function(){
+			var origin = request.headers[["origin"]];
+			if( origin && !string.find(string.lower(origin),"127\.0\.0\.1|localhost") )
+				return response.errorStatus(403,"origin rejected",true);
+			var pv = request.headers[["mcp-protocol-version"]];
+			if( pv && pv!="2025-03-26" && pv!="2025-06-18" )
+				return response.errorStatus(400,"Unsupported MCP-Protocol-Version",true);
+			if( request.method=="GET" || request.method=="DELETE" )
+				return response.errorStatus(405,"Method Not Allowed",true);
+			if( request.method!="POST" )
+				return response.errorStatus(405,"Method Not Allowed",true);
+			var msg = request.postJson();
+			if(!msg) return response.errorStatus(400,"Invalid JSON body",true);
+			var method = msg[["method"]] : "";
+			var id = msg[["id"]];
+			if(method=="initialize"){
+				import autos;
+				var sid = tostring( time.tick() ) ++ tostring( math.random(100000,999999) );
+				response.headers["Mcp-Session-Id"] = sid;
+				var ver = msg.params[["protocolVersion"]];
+				if( ver!="2025-03-26" && ver!="2025-06-18" ) ver = "2025-06-18";
+				return writeJson({
+					jsonrpc="2.0"; id=id;
+					result={
+						protocolVersion=ver;
+						capabilities={ tools={ listChanged=false } };
+						serverInfo={ name="aa-mcp"; version=autos.version ++ "+bridge1" };
+						instructions="AA(aardio autos) 桥：autos 工具直通（含 aardio 代码执行与报错回传）；aa_status/aa_read_reply/aa_stop 用于查询状态与控制";
+					}
+				});
+			}
+			if( id===null || string.find(method,"^notifications/") ){
+				response.status = 202;
+				return response.close(true);
+			}
+			var result,err;
+			if(method=="ping") result = {};
+			elseif(method=="tools/list") result = listTools();
+			elseif(method=="tools/call"){
+				var name = msg.params[["name"]];
+				if(!name) err = {code=-32602;message="missing tool name"};
+				else{
+					var toolRes,toolIsErr;
+					toolRes,toolIsErr = withBusy(function(){ return callTool(name,msg.params[["arguments"]]) });
+					if(toolRes===null) err = {code=-32602;message="Unknown tool: "++name};
+					else{
+						var text = type(toolRes)=="table" ? JSON.stringify(toolRes) : tostring(toolRes);
+						result = { content = { { type="text";text=text } } };
+						if(toolIsErr) result.isError = true;
+					}
+				}
+			}
+			else err = {code=-32601;message="method not found: "++method};
+			if(err) return writeJson({ jsonrpc="2.0"; id=id; error=err },200);
+			writeJson({ jsonrpc="2.0"; id=id; result=result },200);
+		}
+
+		//──── 原生 API 层（/api/*，curl/任意 HTTP 客户端直调）────
+		var apiHandle = function(path){
+			var m = request.method;
+			if( m=="GET" && path=="/api/status" ) return writeJson(mainForm.aaMcpGetStatus());
+			if( m=="GET" && path=="/api/tools" ) return writeJson(listTools());
+			if( m=="GET" && path=="/api/reply" ) return writeJson(mainForm.aaMcpGetReply());
+			if( m!="POST" ) return response.errorStatus(405,"Method Not Allowed",true);
+			var body = request.postJson();
+			if( path=="/api/stop" ) return writeJson(mainForm.aaMcpStop());
+			if( path=="/api/shutdown" ){
+				writeJson({ stopping=true });
+				try{
+					import fsys.table;
+					var t = fsys.table( io.appData("aardio/autos/aa-bridge.table") );
+					t.enabled = false; t.save();
+				}
+				catch(e){}
+				try{ AA_BRIDGE_CFG.enabled = false }catch(e){}  //chunk 全局在工作线程不存在，尽力同步
+				mainForm.aaBridgeStop();  //跨线程代理到 UI 线程停服（响应已写出）
+				return;
+			}
+			if(!body) return response.errorStatus(400,"Invalid JSON body",true);
+			if( path=="/api/tools/call" ){
+				var name = body[["name"]];
+				if(!name) return writeJson({ error="missing tool name" },400);
+				var result,isErr = withBusy(function(){ return callTool(name,body[["arguments"]]) });
+				if(result===null) return writeJson({ error="Unknown tool: "++name },404);
+				return writeJson({ result=result; isError=isErr===true });
+			}
+			return response.errorStatus(404,"Not Found",true);
+		}
+
+		//──── 路由 ────
+		var path = request.path : "/";
+		if( path=="/mcp" ) return mcpHandle();
+		if( string.find(path,"^/api/") ) return apiHandle(path);
+		return response.errorStatus(404,"Not Found",true);
+	}
+
+	var ok,err;
+	for(i=1;3;1){   //端口被旧实例占用时自动重试（等旧实例退出释放端口，2026-09-10 自重启实测教训）
+		var srv = wsock.tcp.simpleHttpServer.mainThread(aaBridgeApp);
+		srv.threadNum = 2;    //1 线程跑长任务，另 1 线程保 status/ping 应答不被卡死
+		srv.documentRoot = io.createDir( io.appData("aardio/autos/aa-bridge-root") );  //空目录，避开默认文档分支
+		srv.threadGlobal = { mainForm = mainForm; chatUi = chatUi; aaBridgeToken = AA_BRIDGE_CFG.token };  //注入请求线程全局（窗口跨线程代理 + 桥token）
+		ok,err = srv.start("127.0.0.1",bridgePort);
+		if(ok){
+			AA_BRIDGE_SERVER = srv;
+			thread.set("(AABRIDGE_ON)",true);
+			mainForm.text = AA_BRIDGE_BASETITLE ++ " [MCP:" ++ bridgePort ++ "]";
+			mainForm.showMessage("✅ 外部桥已就绪: http://127.0.0.1:"++bridgePort++"/api/status");
+			break;
+		}
+		if(i<3) sleep(2500);
+	}
+	if(!ok) mainForm.msgboxErr("外部桥启动失败(端口 "++bridgePort++" 可能被占用)：\n"++(err:""));
+}
+
+if( AA_BRIDGE_CFG.enabled ) mainForm.aaBridgeStart();
+
+//================================ AA-BRIDGE PATCH END ================================
+
+win.loopMessage();

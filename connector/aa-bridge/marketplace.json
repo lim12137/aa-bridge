@@ -1,0 +1,13 @@
+{
+  "name": "aa-bridge-local",
+  "version": 1,
+  "description": "aa-bridge 本地插件市场（AA/aardio autos 桥接）。",
+  "plugins": [
+    {
+      "name": "aa-bridge",
+      "version": "0.1.0",
+      "description": "AA(aardio autos) 桥接：HTTP API + skills，随时开关。",
+      "source": "."
+    }
+  ]
+}
