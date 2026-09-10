@@ -11,6 +11,10 @@
 //      loader entry 冲突等）直接弹窗展示，不再只报"45 秒无响应"；
 //      修复自包含模式「升级 dsh」装错位置：npm -g 会装进 res\nodejs（启动器并不使用），
 //      改为 npm --prefix res\dsh；启动器同时识别发布布局与 npm 标准布局，升级成功后清理旧布局。
+//v1.5：适配 dsh 0.1.5.x（已在 0.1.5-rc.1 实测）：网页地址强制 token 鉴权，裸地址返回 401；
+//      「打开网页/浏览器壳刷新」改为从 dsh-web.log 提取最近一次带 token 的真实地址；
+//      升级命令经实测确认正确：npm install -g @deepseek-ai/dsh@latest 可升到 0.1.5-rc.1，
+//      升级后第三方插件（dsh-web-search-openai v0.6.2）正常注册。
 
 import win.ui;
 /*DSG{{*/
@@ -135,7 +139,7 @@ var appendLog = function(msg){
 	f.write('[',tostring(time(),"%Y-%m-%d %H:%M:%S"),"] ",msg,'\r\n');
 	f.close();
 }
-appendLog("DSH 鲸鱼托盘已启动 v1.3（自包含：内置 Node.js + dsh）。");
+appendLog("DSH 鲸鱼托盘已启动 v1.5（自包含：内置 Node.js + dsh；适配 dsh 0.1.5.x token 鉴权）。");
 
 // ---------- 自绘通知弹窗（不依赖系统通知设置，保证可见）----------
 var TOAST_W,TOAST_H = 380,118;
@@ -209,16 +213,35 @@ var notify = function(title,message,kind){
 
 // ---------- 内置浏览器壳（web.view 打开 dsh 网页，常驻不自动关闭）----------
 var shellForm,wbShell;
+
+//dsh 0.1.5.x 起网页强制 token 鉴权（裸地址 401）。
+//从 dsh-web.log 提取最近一次带 token 的真实地址；日志无记录时回退裸地址。
+//注意（官方规则 docs/library-guide/builtin/string/patterns.md）：模式里冒号 `:`
+//是特殊符号（匹配任意多字节字符），URL 中的 `http:` 会让模式失配，需 `\:` 转义；
+//模式串建议写在双引号（原样字符串）里，单引号是转义字符串须写双反斜杠。
+//本模式只用「端口数字 + [?]token= + 字符类」，不含冒号与反斜杠，规避全部歧义。
+var readWebUrlFromLog = function(){
+	var data = string.load(WEB_LOG_PATH);
+	if(!data) return WEB_URI;
+	if(#data > 8000) data = string.slice(data,-8000,-1); //只扫尾部，避免日志过大
+	var url;
+	for m in string.gmatch(data,WEB_PORT ++ '/[?]token=[A-Za-z0-9_-]+'){
+		url = m; //保留最后一次出现的（对应最近一次启动）
+	}
+	if(url) return 'http://127.0.0.1:' ++ url;
+	return WEB_URI;
+}
+
 var openShell = function(){
 	if(shellForm){
-		wbShell.go(WEB_URI); //重新导航（dsh 可能刚重启过）
+		wbShell.go(readWebUrlFromLog()); //重新导航（dsh 可能刚重启过，token 会变）
 		shellForm.show();
 		shellForm.activate();
 		return;
 	}
 	shellForm = win.form(text="DSH 网页";right=1080;bottom=740)
 	wbShell = web.view(shellForm);
-	wbShell.go(WEB_URI);
+	wbShell.go(readWebUrlFromLog());
 	shellForm.onClose = function(){
 		shellForm = null; //用户手动关闭后，下次「打开网页」时重新创建
 		wbShell = null;
@@ -544,7 +567,7 @@ winform.onWorkerDone = function(result){
 		openShell();
 	}
 	elseif(shellForm && result.kind=="ok" ){
-		wbShell.go(WEB_URI); //浏览器壳已打开则刷新页面
+		wbShell.go(readWebUrlFromLog()); //浏览器壳已打开则刷新页面（0.1.5.x 需带 token 的地址）
 	}
 	refreshStatusAsync();
 }
