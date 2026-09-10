@@ -71,6 +71,32 @@ DshTray\
 
 **总代码量约 640 行**，发布 2.8 MB 单文件 exe——这就是 aardio 的答案。
 
+## 🤖 本次 v1.5 升级由 AA（aardio autos）自主完成
+
+![maintained with AA](https://img.shields.io/badge/maintained%20with-AA%20(aardio%20autos)-449BBE)
+
+v1.5 的全部工程改动——0.1.5.x token 鉴权调研与适配、`loadcode` 编译检查、
+`pb.publishCurrent()` 一键发布、升级命令 `npm install -g @deepseek-ai/dsh@latest`
+的真机实测验证——**不是人手写的，是 [AA 智能体](https://aau.cn/)干的**：
+
+```
+AA（aardio autos v4.9.26，aardio 写的全自主智能体）
+ └─ load_skill("autos.skills.aardioProjectBuilder")   ← 加载工程构建技能包
+     ├─ 读取 .res/skill.md 规约 → 定位 0.1.5.x token 鉴权根因
+     ├─ 修改 main.aardio + loadcode 编译检查          ← execute_code
+     ├─ pb.getCurrentProjectInfo() → pb.publishCurrent() ← 发布 dist\DshTray.exe
+     └─ 真机实测升级命令与插件兼容性
+```
+
+也就是说：**这个仓库本身就是「aardio 写智能体、智能体再写 aardio」的活例子**。
+AA 的工具链（38+ 工具：aardio 代码执行、库文档查询、截图视觉、记忆、技能包……）
+对任何 aardio 使用者都是即插即用的生产力，[点这里了解 AA](https://aau.cn/)。
+
+> 💡 更进一步：AA 的工具箱是 **agent 无关**的——它把全部能力暴露成本机 HTTP API
+> （`/api/tools`、`/api/tools/call`）与 MCP 端点，带 token 鉴权。
+> 理论上可以接入**任意 agent** 里运行：zcode、Claude、Cursor、你自己写的智能体……
+> 只要能发 HTTP 请求，就能驱动 aardio 的整个生态。
+
 ## 📦 版本
 
 - **v1.5**（2026-09-10）：适配 dsh 0.1.5.x token 鉴权；实测升级命令 `npm install -g @deepseek-ai/dsh@latest` 正确升到 0.1.5-rc.1；详见 [docs/2026-09-10-dsh-0.1.5-token鉴权适配.md](docs/2026-09-10-dsh-0.1.5-token鉴权适配.md)
@@ -94,7 +120,7 @@ DshTray\
 ## 🔗 引用与致谢
 
 - [aardio 官网](https://www.aardio.com/) · [aardio 论坛](https://bbs.aardio.com/) —— 桌面极速开发的答案
-- [AA（aardio autos）全自主智能体](https://aau.cn/) —— 本项目的 v1.5 适配由 AA 智能体工具链辅助完成与验证
+- [AA（aardio autos）全自主智能体](https://aau.cn/) —— v1.5 的自主升级与维护者（见上文 🤖 章节）
 - [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh) —— DeepSeek CLI，本托盘管理的对象
 - [Node.js](https://nodejs.org/) v24 便携版
 
