@@ -1,10 +1,10 @@
 # 🐳 WhaleTray · 鲸鱼托盘（DshTray）
 
-**2.8 MB 的 aardio 托盘程序，管住 300 MB 的 DeepSeek CLI 网页服务。**
+**2.8 MB 的 aardio 托盘程序，管住 300 MB 的 DeepSeek harness 网页服务。**
 
 ![built with aardio](https://img.shields.io/badge/built%20with-aardio-07374F?logo=data:image/svg%2bxml;base64 PHN2Zy8+) ![exe size](https://img.shields.io/badge/exe-2.8%20MB-2EA043) ![dsh](https://img.shields.io/badge/dsh-0.1.5.x%20ready-0969DA) ![platform](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4) ![license](https://img.shields.io/badge/license-MIT-yellow)
 
-> 常驻系统托盘的小鲸鱼 🐳，一键启动 / 重启 / 升级 [dsh (DeepSeek CLI)](https://www.npmjs.com/package/@deepseek-ai/dsh) 网页服务，
+> 常驻系统托盘的小鲸鱼 🐳，一键启动 / 重启 / 升级 [dsh (DeepSeek harness)](https://www.npmjs.com/package/@deepseek-ai/dsh) 网页服务，
 > 自带 WebView2 浏览器壳、自绘通知、token 鉴权适配——**发布出来只有一个 2.8 MB 的 exe**。
 
 ![鲸鱼图标](whale_preview.png)
@@ -121,7 +121,7 @@ AA 的工具链（38+ 工具：aardio 代码执行、库文档查询、截图视
 
 - [aardio 官网](https://www.aardio.com/) · [aardio 论坛](https://bbs.aardio.com/) —— 桌面极速开发的答案
 - [AA（aardio autos）全自主智能体](https://aau.cn/) —— v1.5 的自主升级与维护者（见上文 🤖 章节）
-- [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh) —— DeepSeek CLI，本托盘管理的对象
+- [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh) —— DeepSeek harness，本托盘管理的对象
 - [Node.js](https://nodejs.org/) v24 便携版
 
 ## 系统要求

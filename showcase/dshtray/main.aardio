@@ -1,5 +1,5 @@
 //DSH 鲸鱼托盘（aardio 版）v1.3 自包含版
-//常驻系统托盘，管理 dsh (DeepSeek CLI) 网页服务。
+//常驻系统托盘，管理 dsh (DeepSeek harness) 网页服务。
 //右键鲸鱼图标：启动 dsh / 打开网页 / 升级 dsh / 重启 dsh / 退出
 //v1.2：打开网页改用内置 WebView2 浏览器壳（常驻，不自动关闭）；
 //      「关闭 dsh」改为「重启 dsh」；「退出」会同时关闭 dsh 与浏览器壳；

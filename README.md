@@ -52,7 +52,7 @@ reverseSkill 逆向知识库 / skillCreator 等 13 个）后继续增加，运�
 
 ### ① [WhaleTray · 鲸鱼托盘](showcase/dshtray/)（DshTray）
 
-2.8 MB 的 aardio 托盘程序，管理 DeepSeek CLI 网页服务。
+2.8 MB 的 aardio 托盘程序，管理 DeepSeek harness 网页服务。
 **它的 v1.5 升级（dsh 0.1.5.x token 鉴权适配）就是由 AA 通过本连接器的能力自主完成的**：
 加载 `aardioProjectBuilder` 技能包 → 修改 `main.aardio` → `loadcode` 编译检查 →
 `pb.publishCurrent()` 一键发布 → 真机实测升级命令。全程无人工编码。
@@ -83,7 +83,7 @@ reverseSkill 逆向知识库 / skillCreator 等 13 个）后继续增加，运�
 - [AA（aardio autos）全自主智能体](https://aau.cn/) —— 被接入的那头鲸鱼
 - [aardio 官网](https://www.aardio.com/) · [aardio 论坛](https://bbs.aardio.com/) —— 一切的基础
 - [MCP 规范 2025-06-18](https://modelcontextprotocol.io/specification/2025-06-18) —— /mcp 端点遵循
-- 作品① [WhaleTray](showcase/dshtray/) 管理的 [DeepSeek CLI (dsh)](https://www.npmjs.com/package/@deepseek-ai/dsh)
+- 作品① [WhaleTray](showcase/dshtray/) 管理的 [DeepSeek harness (dsh)](https://www.npmjs.com/package/@deepseek-ai/dsh)
 
 ## License
 
