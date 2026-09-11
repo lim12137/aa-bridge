@@ -1,4 +1,0 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<project ver="10" name="DshTray" libEmbed="true" icon="\app.ico" ui="win" output="DshTray.exe" CompanyName="DshTray" FileDescription="DSH 鲸鱼托盘 - 管理 dsh 网页服务的系统托盘工具" LegalCopyright="Copyright (C) 2026" ProductName="DSH 鲸鱼托盘" InternalName="DshTray" FileVersion="1.0.0.8" ProductVersion="1.0.0.8" publishDir="/dist/" dstrip="false">
-	<file name="main" path="main.aardio"/>
-</project>
