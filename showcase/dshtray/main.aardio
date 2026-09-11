@@ -1,20 +1,20 @@
-//DSH 鲸鱼托盘（aardio 版）v1.3 自包含版
+//DSH 鲸鱼托盘（aardio 版）v2.0 全自包含便携版
 //常驻系统托盘，管理 dsh (DeepSeek harness) 网页服务。
 //右键鲸鱼图标：启动 dsh / 打开网页 / 升级 dsh / 重启 dsh / 退出
-//v1.2：打开网页改用内置 WebView2 浏览器壳（常驻，不自动关闭）；
-//      「关闭 dsh」改为「重启 dsh」；「退出」会同时关闭 dsh 与浏览器壳；
-//      移除系统托盘气泡通知（Win11 下应用名显示乱码），仅保留自绘弹窗。
-//v1.1：自绘通知弹窗；启动不再打开浏览器(--no-open)；
-//      自动修复 .env 中 dsh 禁止的 DSH_* 变量（转为环境变量导出）；
-//      修复 taskkill 退出码判断错误导致升级/关闭无效的问题。
-//v1.4：启动失败时从 dsh-web.log 提取真实崩溃原因（插件依赖 ERR_MODULE_NOT_FOUND、
-//      loader entry 冲突等）直接弹窗展示，不再只报"45 秒无响应"；
-//      修复自包含模式「升级 dsh」装错位置：npm -g 会装进 res\nodejs（启动器并不使用），
-//      改为 npm --prefix res\dsh；启动器同时识别发布布局与 npm 标准布局，升级成功后清理旧布局。
-//v1.5：适配 dsh 0.1.5.x（已在 0.1.5-rc.1 实测）：网页地址强制 token 鉴权，裸地址返回 401；
-//      「打开网页/浏览器壳刷新」改为从 dsh-web.log 提取最近一次带 token 的真实地址；
-//      升级命令经实测确认正确：npm install -g @deepseek-ai/dsh@latest 可升到 0.1.5-rc.1，
-//      升级后第三方插件（dsh-web-search-openai v0.6.2）正常注册。
+//
+//v2.0（重做自包含架构）：
+//  · 运行时布局统一为 exe 目录下 app\：app\node\node.exe（便携 node）、
+//    app\node\npm-cli\（npm，仅升级/装插件用）、app\dsh\（dsh 包 + 精简后依赖）、
+//    app\home\（★USERPROFILE/HOME 重定向目标：.dsh 与 .env 全部落在这里）、app\logs\
+//  · 启动/升级命令一律注入 set "USERPROFILE=home" && set "HOME=home"：
+//    dsh 的 profiles/sessions/settings、npm 缓存、新装插件全部自包含，不碰用户全局
+//  · 去掉 v1.x 双布局兼容（res\nodejs / res\dsh 旧布局不再识别，检测到即提示可删）
+//  · 升级 = node 直接跑 npm-cli.js --prefix app\dsh（不再依赖 npm.cmd / 全局 npm）
+//  · 砍掉非 x64 平台二进制与 wasm 后备（node-pty/sharp），npm 文档目录不随发行
+//  · 保留 v1.x：鲸鱼图标/自绘弹窗/WebView2 壳/token 鉴权适配（从日志提取带 token 地址）/
+//    .env 引导变量修复/单实例保护/退出清理
+//历史：v1.5 适配 dsh 0.1.5.x token 鉴权；v1.4 启动失败真因提取；v1.3 自包含首版；
+//      v1.2 WebView2 壳常驻；v1.1 自绘通知；v1.0 初版。
 
 import win.ui;
 /*DSG{{*/
@@ -33,32 +33,28 @@ import web.view;
 
 var WEB_PORT = 7331;
 var WEB_URI = "http://127.0.0.1:" ++ WEB_PORT ++ "/";
-var LOG_DIR = io.joinpath(string.expand("%LOCALAPPDATA%"),"DshTray");
-io.createDir(LOG_DIR);
+
+// ---------- v2.0 自包含布局（全部相对 exe 目录）----------
+var APP_DIR = io.fullpath("/app");
+var NODE_EXE = io.joinpath(APP_DIR,"node","node.exe");
+var NPM_CLI = io.joinpath(APP_DIR,"node","npm-cli","bin","npm-cli.js");
+var DSH_DIR = io.joinpath(APP_DIR,"dsh");
+var DSH_BIN = io.joinpath(DSH_DIR,"node_modules","@deepseek-ai","dsh","lib","bin.js");
+var HOME_DIR = io.joinpath(APP_DIR,"home");
+var APP_LOG_DIR = io.joinpath(APP_DIR,"logs");
+io.createDir(HOME_DIR);
+io.createDir(APP_LOG_DIR);
+
+var LEGACY_RES = io.fullpath("/res"); //v1.x 旧布局残留检测
+var LOG_DIR = APP_LOG_DIR; //日志随发行目录走（便携）
 var LOG_PATH = io.joinpath(LOG_DIR,"dsh-tray.log");
 var WEB_LOG_PATH = io.joinpath(LOG_DIR,"dsh-web.log");
 var USER_PROFILE = string.expand("%USERPROFILE%");
-var ENV_PATH = io.joinpath(USER_PROFILE,".env");
+var ENV_PATH = io.joinpath(HOME_DIR,".env"); //.env 跟着重定向后的 home
 
-// ---------- 内置 Node.js + dsh（自包含模式）----------
-var BUILTIN_NODEJS = io.joinpath(io.fullpath("/res/nodejs"), "node.exe");
-var RES_DSH_DIR = io.fullpath("/res/dsh");
-//内置 dsh 两种布局都认：发布包自带 res\dsh\dsh\lib\bin.js，以及「升级 dsh」用
-//npm --prefix 装出的标准布局 res\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js
-//（同时存在时优先 npm 标准布局，保证升级立即生效）。
-var findBuiltinDshBin = function(root){
-	var candidates = {
-		io.joinpath(root,"node_modules","@deepseek-ai","dsh","lib","bin.js");
-		io.joinpath(root,"dsh","lib","bin.js")
-	};
-	for(i=1;#candidates;1){
-		if(io.exist(candidates[i])) return candidates[i];
-	}
+var runtimeReady = function(){
+	return io.exist(NODE_EXE) && io.exist(DSH_BIN);
 }
-var BUILTIN_NPM = io.joinpath(io.fullpath("/res/nodejs"), "npm.cmd");
-// 运行时目录：用户数据目录，存放 dsh 运行时状态
-var RUNTIME_DIR = io.joinpath(string.expand("%LOCALAPPDATA%"), "DshTray", "runtime");
-io.createDir(RUNTIME_DIR);
 
 // ---------- 单实例保护 ----------
 ::Kernel32.CreateMutexW(null,false,"Local\\DshTray.SingleInstance");
@@ -139,7 +135,10 @@ var appendLog = function(msg){
 	f.write('[',tostring(time(),"%Y-%m-%d %H:%M:%S"),"] ",msg,'\r\n');
 	f.close();
 }
-appendLog("DSH 鲸鱼托盘已启动 v1.5（自包含：内置 Node.js + dsh；适配 dsh 0.1.5.x token 鉴权）。");
+appendLog("DSH 鲸鱼托盘已启动 v2.0（全自包含便携版：app\\node + app\\dsh + USERPROFILE 重定向 app\\home）。");
+if( io.exist( io.joinpath(LEGACY_RES,"nodejs") ) || io.exist( io.joinpath(LEGACY_RES,"dsh") ) ){
+	appendLog("检测到 v1.x 旧布局 " ++ LEGACY_RES ++ "（v2.0 不再使用，可整目录删除以省空间）。");
+}
 
 // ---------- 自绘通知弹窗（不依赖系统通知设置，保证可见）----------
 var TOAST_W,TOAST_H = 380,118;
@@ -255,7 +254,7 @@ var exitApp = function(){
 	thread.invokeAndWait(function(){
 		import process.popen;
 		import com.wmi;
-		//与 worker 相同的查询：自包含路径不含 @deepseek-ai，限定 node.exe 排除 cmd 包装进程
+		//与 worker 相同的查询：限定 node.exe + dsh lib bin.js，排除 cmd 包装与其他 Node 程序
 		var rows = com.wmi.getTable("SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%dsh%lib%bin.js%'");
 		if(rows){
 			for(i=1;#rows;1){
@@ -280,7 +279,7 @@ var exitApp = function(){
 }
 
 // ---------- 后台工作线程（纯函数）----------
-	var dshWorker = function(winform,action,cfg){
+var dshWorker = function(winform,action,cfg){
 	import process;
 	import process.popen;
 	import wsock.tcp.client;
@@ -293,28 +292,12 @@ var exitApp = function(){
 		f.close();
 	}
 
-	var findExecutable = function(name){
-		// 优先使用内置的 Node.js/npm
-		if(name == "node.exe" and io.exist(BUILTIN_NODEJS)) return BUILTIN_NODEJS;
-		if(name == "npm.cmd" and io.exist(BUILTIN_NPM)) return BUILTIN_NPM;
-		var path = string.getenv("PATH");
-		if(!path) return null;
-		for dir in string.lines(path,";") {
-			dir = string.trim(dir,' \t"');
-			if(#dir){
-				var candidate = io.joinpath(dir,name);
-				if(io.exist(candidate)) return candidate;
-			}
-		}
-	}
-
 	var isWebReady = function(){
 		return wsock.tcp.client.test("127.0.0.1",cfg.port,1)!=null;
 	}
 
 	var findDshProcessIds = function(){
-		//注意：自包含模式下命令行是 res\dsh\dsh\lib\bin.js（不含 @deepseek-ai），
-		//限定 Name='node.exe' 可排除 cmd.exe 包装进程，也不会误杀其他 Node.js 程序。
+		//v2.0 命令行 = app\node\node.exe app\dsh\...\lib\bin.js；限定 node.exe 排除 cmd 包装
 		var rows = com.wmi.getTable("SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%dsh%lib%bin.js%'");
 		var map = {};
 		var ids = {};
@@ -326,6 +309,9 @@ var exitApp = function(){
 		}
 		return ids;
 	}
+
+	//USERPROFILE/HOME 重定向到 app\home：dsh 状态（.dsh）、npm 缓存、新装插件全部自包含
+	var portablePrefix = 'set "USERPROFILE=' ++ cfg.homeDir ++ '"&& set "HOME=' ++ cfg.homeDir ++ '"&& ';
 
 	//修复 .env：新版 dsh 禁止 .env 设置 DSH_* 等引导变量（会直接崩溃退出），
 	//将这些变量从 .env 移出并作为环境变量注入启动命令。
@@ -420,26 +406,19 @@ var exitApp = function(){
 
 		var hasProcess = #findDshProcessIds() > 0;
 		if(!hasProcess){
+			if(!io.exist(cfg.nodeExe) || !io.exist(cfg.dshBin)){
+				return false,"自包含运行时不完整：缺少 " ++ cfg.nodeExe ++ " 或 " ++ cfg.dshBin ++ "。请按 README 重新部署 app\\ 目录。";
+			}
 			var exportedVars = repairEnv();
-			var pre = "";
+			var pre = portablePrefix;
 			for(i=1;#exportedVars;1){
 				pre ++= 'set "' ++ exportedVars[i].k ++ '=' ++ exportedVars[i].v ++ '"&& ';
 			}
-			//自包含模式：优先使用内置 Node.js + 内置 dsh；不存在时回退系统安装的 dsh
-			var inner;
-			var dshBin = findBuiltinDshBin(cfg.resDshDir); //「升级 dsh」后布局会变，每次启动现查
-			if(io.exist(cfg.nodeExe) && dshBin){
-				appendLog("自包含模式：使用内置 Node.js 与内置 dsh（" ++ dshBin ++ "）。");
-				inner = pre ++ '"' ++ cfg.nodeExe ++ '" "' ++ dshBin ++ '" web --no-open --host 127.0.0.1 --port ' ++ cfg.port ++ ' >> "' ++ cfg.webLogPath ++ '" 2>&1';
-			} else {
-				var dshPath = findExecutable("dsh.cmd") : findExecutable("dsh");
-				if(!dshPath) return false,"未找到 dsh：内置资源缺失且系统中也未安装 dsh。";
-				appendLog("回退模式：使用系统安装的 dsh（" ++ dshPath ++ "）。");
-				inner = pre ++ '"' ++ dshPath ++ '" web --no-open --host 127.0.0.1 --port ' ++ cfg.port ++ ' >> "' ++ cfg.webLogPath ++ '" 2>&1';
-			}
+			appendLog("自包含模式：USERPROFILE/HOME → " ++ cfg.homeDir ++ "；dsh = " ++ cfg.dshBin ++ "。");
+			var inner = pre ++ '"' ++ cfg.nodeExe ++ '" "' ++ cfg.dshBin ++ '" web --no-open --host 127.0.0.1 --port ' ++ cfg.port ++ ' >> "' ++ cfg.webLogPath ++ '" 2>&1';
 			var prcs,err = process("cmd.exe",'/d /s /c "' ++ inner ++ '"',{
 				createNoWindow = true;
-				workDir = cfg.workDir;
+				workDir = cfg.homeDir; //工作目录也在自包含目录内
 			});
 			if(!prcs) return false,"无法启动 dsh：" ++ (err : "未知错误");
 			appendLog("已启动 dsh 网页进程 PID=" ++ prcs.id ++ "，监听端口 " ++ cfg.port ++ "（--no-open）。" );
@@ -451,7 +430,7 @@ var exitApp = function(){
 		var output = readWebLogTail();
 		var summary;
 		if( string.indexOf(output,"createZstdDecompress") || string.indexOf(output,"stripTypeScriptTypes") ){
-			summary = "当前 Node.js 版本与安装的 dsh 不兼容。请先将 Node.js 升级到当前 LTS 版本，然后重试。";
+			summary = "当前 Node.js 版本与安装的 dsh 不兼容。请先用托盘菜单「升级 dsh」或重新部署 app\\runtime。";
 		}
 		else {
 			//从日志提取真实崩溃原因（插件依赖无法解析、loader entry 冲突等），不再只报笼统的超时
@@ -495,39 +474,32 @@ var exitApp = function(){
 		case "upgrade" {
 			var ok,msg = stopAllDsh();
 			if(ok){
-				appendLog("开始执行 dsh 升级。");
-				var selfContained = io.exist(cfg.nodeExe) && findBuiltinDshBin(cfg.resDshDir);
-				var npmPath = findExecutable("npm.cmd") : findExecutable("npm") : BUILTIN_NPM;
-				//自包含模式不能用 -g：那会装进 res\nodejs（启动器并不使用），必须 --prefix 到 res\dsh
-				var inner = selfContained
-					? '"' ++ npmPath ++ '" install --prefix "' ++ cfg.resDshDir ++ '" @deepseek-ai/dsh@latest --no-fund --no-audit'
-					: '"' ++ npmPath ++ '" install -g @deepseek-ai/dsh@latest --no-fund --no-audit';
-				var prcs = process.popen("cmd.exe",'/d /s /c "' ++ inner ++ '"',{workDir=cfg.workDir});
-				var output,errOut,exitCode = prcs.readAll();
-				appendLog("dsh 升级命令退出，退出码 " ++ tostring(exitCode) ++ "。");
-				if(exitCode == 0){
-					//升级后启动器优先使用 npm 标准布局；清理发布布局的旧拷贝，避免继续用旧版
-					if( selfContained
-						&& io.exist(io.joinpath(cfg.resDshDir,"node_modules","@deepseek-ai","dsh"))
-						&& io.exist(io.joinpath(cfg.resDshDir,"dsh")) ){
-						fsys.delete(io.joinpath(cfg.resDshDir,"dsh"));
-						appendLog("已清理发布布局的旧版 dsh 目录（res\\dsh\\dsh），此后使用升级后的标准布局。");
-					}
-					//升级成功后自动启动 dsh 网页服务
-					appendLog("升级成功，正在自动启动 dsh 网页服务……");
-					var started,startMsg = ensureWebServer();
-					if(started){
-						appendLog("dsh 已随升级自动启动。");
-						result = {kind="ok";title="升级完成";message="dsh 已完成升级，并已自动启动网页服务（" ++ cfg.url ++ "）。"};
-					} else {
-						appendLog("升级后自动启动失败：" ++ startMsg);
-						result = {kind="info";title="升级完成";
-							message="dsh 已完成升级，但自动启动失败：\r\n" ++ startMsg ++ "\r\n\r\n可稍后通过菜单「启动 dsh」重试。"};
-					}
+				if(!io.exist(cfg.nodeExe) || !io.exist(cfg.npmCli)){
+					result = {kind="error";title="升级 dsh 失败";message="自包含运行时不完整：缺少 " ++ cfg.nodeExe ++ " 或 " ++ cfg.npmCli};
 				} else {
-					result = {kind="error";title="升级 dsh 失败";
-						message="npm 升级命令失败，退出码 " ++ tostring(exitCode) ++ "。\r\n\r\n" ++ string.left(output ++ (errOut:"") ,1200)
-					};
+					appendLog("开始执行 dsh 升级（--prefix " ++ cfg.dshDir ++ "，USERPROFILE 重定向自包含）。");
+					//v2.0：node 直接跑 npm-cli.js，--prefix 指向 app\dsh；USERPROFILE 重定向 → npm 缓存也自包含
+					var inner = portablePrefix ++ '"' ++ cfg.nodeExe ++ '" "' ++ cfg.npmCli ++ '" install --prefix "' ++ cfg.dshDir ++ '" @deepseek-ai/dsh@latest --no-fund --no-audit';
+					var prcs = process.popen("cmd.exe",'/d /s /c "' ++ inner ++ '"',{workDir=cfg.homeDir});
+					var output,errOut,exitCode = prcs.readAll();
+					appendLog("dsh 升级命令退出，退出码 " ++ tostring(exitCode) ++ "。");
+					if(exitCode == 0){
+						//升级成功后自动启动 dsh 网页服务
+						appendLog("升级成功，正在自动启动 dsh 网页服务……");
+						var started,startMsg = ensureWebServer();
+						if(started){
+							appendLog("dsh 已随升级自动启动。");
+							result = {kind="ok";title="升级完成";message="dsh 已完成升级，并已自动启动网页服务（" ++ cfg.url ++ "）。"};
+						} else {
+							appendLog("升级后自动启动失败：" ++ startMsg);
+							result = {kind="info";title="升级完成";
+								message="dsh 已完成升级，但自动启动失败：\r\n" ++ startMsg ++ "\r\n\r\n可稍后通过菜单「启动 dsh」重试。"};
+						}
+					} else {
+						result = {kind="error";title="升级 dsh 失败";
+							message="npm 升级命令失败，退出码 " ++ tostring(exitCode) ++ "。\r\n\r\n" ++ string.left(output ++ (errOut:"") ,1200)
+						};
+					}
 				}
 			} else {
 				result = {kind="error";title="升级 dsh 失败";message=msg};
@@ -584,12 +556,15 @@ var runAction = function(action,busyTip){
 		port = WEB_PORT;
 		logPath = LOG_PATH;
 		webLogPath = WEB_LOG_PATH;
-		workDir = USER_PROFILE;
+		homeDir = HOME_DIR;      //★USERPROFILE/HOME 重定向目标（自包含状态根）
+		workDir = HOME_DIR;
 		url = WEB_URI;
-			envPath = ENV_PATH;
-			nodeExe = BUILTIN_NODEJS;
-			resDshDir = RES_DSH_DIR;
-		})
+		envPath = ENV_PATH;      //app\home\.env（跟随重定向）
+		nodeExe = NODE_EXE;      //app\node\node.exe
+		npmCli = NPM_CLI;        //app\node\npm-cli\bin\npm-cli.js
+		dshBin = DSH_BIN;        //app\dsh\...\lib\bin.js
+		dshDir = DSH_DIR;        //app\dsh（升级 --prefix 目标）
+	})
 }
 
 // ---------- 状态刷新（后台线程查询，结果写入线程共享区）----------
@@ -639,6 +614,14 @@ winform.onTrayMessage = {
 	[0x203/*_WM_LBUTTONDBLCLK*/] = function(wParam){
 		runAction("openWeb","正在打开 dsh 网页……");
 	};
+}
+
+//启动时自检：运行时不完整直接提示（避免每次点菜单才报错）
+if( !runtimeReady() ){
+	winform.msgboxErr(
+		"自包含运行时不完整：\r\n" ++ NODE_EXE ++ "\r\n" ++ DSH_BIN ++ "\r\n\r\n请按 README 部署 app\\ 目录后重试。",
+		"DSH 鲸鱼"
+	);
 }
 
 //定时刷新状态

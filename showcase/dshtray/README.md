@@ -14,32 +14,37 @@
 - 🐳 托盘鲸鱼图标（GDIP 逐帧自绘，8 种尺寸合一枚 .ico），右键菜单实时显示状态（未运行 / 正在启动 / 网页已运行，每 5 秒后台刷新）
 - 🌐 **打开网页**：自动启动 dsh web 并用内置 WebView2 浏览器壳打开（常驻，不自动关闭）
 - 🔑 **dsh 0.1.5.x token 鉴权适配**：新版网页强制一次性 token（裸地址 401），自动从运行日志提取最新带 token 地址（v1.5）
+- 🧳 **v2.0 全自包含便携化**：`USERPROFILE/HOME` 重定向到发行目录 `app\home\`——dsh 的 profiles/sessions/settings、`.env`、npm 缓存、**新装插件**全部自包含，不碰用户全局
 - 🚀 **启动 dsh**：仅启动网页服务，不打开浏览器（`--no-open`）
 - 🔄 **重启 dsh**：真正结束所有 dsh 进程（等待端口释放）后重新启动
-- ⬆️ **升级 dsh**：结束 dsh 进程后执行 `npm install -g @deepseek-ai/dsh@latest`，成功后自动重启服务（已在 0.1.5-rc.1 实测）
+- ⬆️ **升级 dsh**：`node.exe npm-cli.js install --prefix app\dsh @deepseek-ai/dsh@latest`（自包含升级，成功后自动重启服务）
 - 🚪 **退出**：一键关闭 dsh 进程 + 浏览器壳 + 托盘
 - 🔔 自绘通知弹窗（右下角滑入，不受 Win11 通知设置影响，无系统气泡乱码问题）
-- 🔒 单实例互斥锁；日志写入 `%LOCALAPPDATA%\DshTray\dsh-tray.log`
-- 🛠️ 自动修复 `%USERPROFILE%\.env` 中新版 dsh 禁止的 `DSH_*` 等引导变量（转为环境变量注入，配置不丢失）
+- 🔒 单实例互斥锁；日志随发行目录走（`app\logs\dsh-tray.log`，便携）
+- 🛠️ 自动修复 `app\home\.env` 中新版 dsh 禁止的 `DSH_*` 等引导变量（转为环境变量注入，配置不丢失）
 - ⏱️ 耗时操作在后台线程执行，界面不卡，操作期间菜单自动禁用
 
 ## 🚀 使用
 
-### 方式一：自包含版（推荐）
+### 方式一：自包含版（v2.0 便携布局，推荐）
 
-下载 Release 中的 `DshTray` 文件夹（约 300MB），双击 `DshTray.exe`：
+下载 Release 中的 `DshTray` 文件夹（约 350MB），双击 `DshTray.exe`：
 
 ```
 DshTray\
-├── DshTray.exe        # 托盘程序
-└── res\
-    ├── nodejs\        # Node.js v24 便携版
-    └── dsh\dsh\       # dsh 包及全部依赖
+├── DshTray.exe        # 托盘程序（2.8 MB）
+└── app\
+    ├── node\
+    │   ├── node.exe   # 便携 Node.js v24（单文件）
+    │   └── npm-cli\   # npm（升级 dsh / 装插件用）
+    ├── dsh\           # dsh 包 + 精简后依赖（已裁非 x64 平台二进制）
+    ├── home\          # ★ USERPROFILE/HOME 重定向目标：
+    │                  #   .dsh\（profiles/sessions/settings）、.env、npm 缓存
+    │                  #   —— 新装插件也全部落在这里，完全不碰用户全局
+    └── logs\          # dsh-tray.log / dsh-web.log（便携日志）
 ```
 
-启动 dsh 时优先使用内置资源；`res\` 缺失时自动回退到系统 PATH 中安装的 dsh。
-
-启动失败排查：先看 `%LOCALAPPDATA%\DshTray\dsh-web.log` 的崩溃栈（v1.4 起弹窗直接展示关键原因）。
+启动失败排查：先看 `app\logs\dsh-web.log` 的崩溃栈（v1.4 起弹窗直接展示关键原因）。
 第三方插件（`link:` junction 安装）裸导入 `@deepseek-ai/*` 解析失败会令 dsh 启动即崩，
 解法见 `docs/2026-08-23-自包含启动失败-插件依赖解析修复.md`。
 
@@ -47,13 +52,8 @@ DshTray\
 
 1. 用 [aardio](https://www.aardio.com/) 打开 `default.aproj`
 2. 一键「发布」（F7）得到 `dist\DshTray.exe`（库内嵌，单文件即可运行）
-3. 组装自包含文件夹：
-
-   ```powershell
-   # 1. 下载 Node.js 便携版（zip）解压到 res\nodejs\
-   # 2. 用该 node 执行: npm install --prefix res\dsh @deepseek-ai/dsh
-   # 3. 将 DshTray.exe 放入文件夹根目录
-   ```
+3. 组装自包含 `app\` 目录：逐条命令见 [`docs/BUILD-RUNTIME.md`](docs/BUILD-RUNTIME.md)
+   （node.exe + npm-cli 拷贝 → dsh 安装 → 平台二进制裁剪 → 首次启动验证）
 
 ## 💡 为什么 aardio 使用者值得看这个仓库
 
@@ -99,6 +99,7 @@ AA 的工具链（38+ 工具：aardio 代码执行、库文档查询、截图视
 
 ## 📦 版本
 
+- **v2.0**（2026-09-11）：全自包含便携版重做——`USERPROFILE/HOME` 重定向到 `app\home\`（dsh 状态/.env/npm 缓存/新装插件全自包含）；统一 `app\` 运行时布局，废除 v1.x 双布局兼容；升级改用内置 npm-cli.js `--prefix`；裁掉非 x64 平台二进制与 wasm 后备；运行时不完整启动即提示；构建记录见 [docs/BUILD-RUNTIME.md](docs/BUILD-RUNTIME.md)
 - **v1.5**（2026-09-10）：适配 dsh 0.1.5.x token 鉴权；实测升级命令 `npm install -g @deepseek-ai/dsh@latest` 正确升到 0.1.5-rc.1；详见 [docs/2026-09-10-dsh-0.1.5-token鉴权适配.md](docs/2026-09-10-dsh-0.1.5-token鉴权适配.md)
 - v1.4：启动失败弹窗展示真实崩溃原因；自包含升级改用 `npm --prefix res\dsh`（`-g` 会装错位置）
 - v1.3：自包含版（内置 Node.js + dsh）
@@ -116,6 +117,9 @@ AA 的工具链（38+ 工具：aardio 代码执行、库文档查询、截图视
 | 自包含模式下进程命令行不含 `@deepseek-ai`，旧 WMI 查询匹配不到进程 | 改用 `Name='node.exe' AND CommandLine LIKE '%dsh%lib%bin.js%'` |
 | taskkill 后端口未立即释放导致重启误判 | 轮询等待进程消失 + 端口释放 |
 | 第三方插件 junction 裸导入 `@deepseek-ai/*` 解析失败，dsh 启动即崩 | 见 [docs/2026-08-23-自包含启动失败-插件依赖解析修复.md](docs/2026-08-23-自包含启动失败-插件依赖解析修复.md) |
+| **v2.0**：`io.exepath()` 不存在 | 用 `io._exedir` / `io._exepath` |
+| **v2.0**：aardio 工程目录里的自定义入口文件会被 IDE 自动生成的模板 `main.aardio` 抢占发布位 | 代码写进 `main.aardio`，不要起自定义入口名 |
+| **v2.0**：IDE 被外部程序最小化/窗口状态异常时，`ide.publish` 会静默无效（只产出 .obj） | 发布前恢复 IDE 窗口（ShowWindow SW_RESTORE）；IDE 命令通道报 RAW CALLBACK ERROR 时重启 IDE |
 
 ## 🔗 引用与致谢
 
