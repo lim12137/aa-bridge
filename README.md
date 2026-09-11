@@ -44,13 +44,16 @@
 ## ⚡ 三分钟接入
 
 ```text
-1. 起服务（二选一）：
-   a) 带 AA：connector/aa-patched-autos.aardio 用 aardio IDE 打开 → F5 → 设置里勾「外部桥」
-   b) 纯后台：构建 connector/aacli（README 三步）→ aacli.exe 直接跑，连 IDE 都不用开
-   （首次启动自动生成 token：%LocalAppData%\aardio\autos\aa-bridge.table）
-2. AA「设置」→ 勾选底部「外部桥」→ 绿色提示「外部桥已就绪」（aacli 无此步）
+1. 起服务（二选一，★推荐 aacli 纯后台）：
+   a) ★ aacli：构建 connector/aacli（README 三步）→ aacli.exe 直接跑，
+      无界面托盘常驻，连 IDE 都不用开，agent 随时拉起
+   b) 带 AA 聊天界面：connector/aa-patched-autos.aardio 用 aardio IDE 打开 →
+      F5 → 设置里勾「外部桥」
+   （首次启动自动生成 token：%LocalAppData%\aardio\autos\aa-bridge.table；
+     与 b 并存时 aacli 用 --port 换端口）
+2. AA「设置」→ 勾选底部「外部桥」→ 绿色提示「外部桥已就绪」（仅 b 需要）
 3a. zcode 用户：把 connector/aa-bridge 目录注册为本地插件/技能（SKILL.md 会教 agent 全部用法）
-3b. dsh 用户：dsh plugin --profile <名> add connector/dsh-aa-bridge
+3b. dsh 用户：独立插件仓库 github.com/lim12137/dsh-aa-bridge（源码同步内置于 connector/dsh-aa-bridge）
 3c. 其他 agent：直接 curl ——
        curl -H "X-AA-Token: <token>" http://127.0.0.1:9123/api/tools        # 看工具箱
        curl -H "X-AA-Token: <token>" -H "Content-Type: application/json" \
@@ -83,7 +86,7 @@ reverseSkill 逆向知识库 / skillCreator 等 13 个）后继续增加，运�
 │  ├─ aa-runner/                  # 无头单发执行器（执行 aardio 代码 / 驱动 IDE）
 │  ├─ aa-client/                  # 零依赖 ESM 客户端（Node ≥18）
 │  ├─ aa-cli/                     # 命令行客户端（桥优先 / aa-runner 兜底）
-│  ├─ dsh-aa-bridge/              # DeepSeek harness 插件（动态注册 26+ 工具）
+│  ├─ dsh-aa-bridge/              # DeepSeek harness 插件（独立仓库：lim12137/dsh-aa-bridge）
 │  ├─ aa-bridge/                  # zcode 插件（skills + commands + aa.ps1）
 │  │  └─ aa-patch/                # 打好补丁的 AA 源码快照 + 补丁说明
 │  └─ test/                       # api-curl.sh / mcp-curl.sh 验收脚本

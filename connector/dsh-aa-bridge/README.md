@@ -1,82 +1,105 @@
-# dsh-aa-bridge
+> ⭐ 独立插件仓库：[lim12137/dsh-aa-bridge](https://github.com/lim12137/dsh-aa-bridge)（本目录与其保持同步，装插件建议直接用独立仓库）
 
-[aa-bridge](../aa-client/)（aardio autos 智能体的 HTTP 桥，默认 `http://127.0.0.1:9123`）的 **DeepSeek Harness（dsh）连接器插件**：启动时从桥拉取工具目录（`GET /api/tools`），把每个桥工具动态注册为 harness 原生工具；调用经 `POST /api/tools/call` 转发，桥返回体（`{result, isError}`）原样透传。
+# dsh-aa-bridge · 把 AA 的整个工具箱装进 DeepSeek Harness
 
-适配 dsh 0.1.5-rc.1（profile bundle-patch 机制）。官方名称是 **DeepSeek harness**（不是 "DeepSeek CLI"）。
+[![dsh](https://img.shields.io/badge/DeepSeek-harness-4D6BFE)](https://www.npmjs.com/package/@deepseek-ai/dsh)
+[![tools](https://img.shields.io/badge/tools-26%2B%20dynamic-2EA043)](https://github.com/lim12137/aa-bridge)
+[![deps](https://img.shields.io/badge/npm%20deps-0-00B8A9)](#安装)
+[![license](https://img.shields.io/badge/license-MIT-yellow)](#license)
 
-## 工作方式
+一个 [DeepSeek Harness (dsh)](https://www.npmjs.com/package/@deepseek-ai/dsh) 插件：
+启动时从 [aa-bridge](https://github.com/lim12137/aa-bridge) HTTP 桥拉取工具目录
+（`GET /api/tools`），把 **AA(aardio autos 智能体) 的 26+ 个工具**动态注册成 harness
+原生工具；调用经 `POST /api/tools/call` 转发，返回体原样透传。
 
-- 插件是 cordis 插件：`export const name / inject / apply(ctx)`，经自带 `cordis.patch.yml` 以 bundle patch 层挂载（`- insert: [{id: aa-bridge, name: dsh-aa-bridge}]`）。
-- `apply` 为 async 且 await 激活完成：loader fiber 等注册落地后才算启动完成，一次性 runner（`loader.await()`）等消费方能观察到稳定注册；目录拉取受 `AA_BRIDGE_BOOT_TIMEOUT_MS` 预算约束。桥不可达时只打一行 warning、不注册任何工具、**绝不弄崩宿主**（代价最多是启动多等一个预算周期）。
-- 注册为一次性快照：启动时桥在线才注册；运行中桥断开不影响已注册工具（调用会报错），重启 dsh 后恢复。
-- 工具互斥执行（未声明 `isConcurrencySafe`）——桥侧本就串行化 tools/call。
+装好后，你的 dsh agent 会多出这些本事：
 
-## 工具命名规则
-
-`<前缀><桥工具名>`，前缀默认 `aa_`（`AA_BRIDGE_TOOL_PREFIX` 可改）：
-
-- 桥工具名已带前缀则**不叠加**：`aa_status` 仍注册为 `aa_status`；
-- 其余加前缀：`execute_code` → `aa_execute_code`。
-
-目的：与 harness 内建工具（bash/read/edit…）命名空间隔离，避免撞名。description 一律用桥返回原文。
-
-## 安装（junction 方式）
-
-前提：桥的 token 文件在默认路径（`%LOCALAPPDATA%\aardio\autos\aa-bridge.table`），且 aa-client 已 junction 到本插件 `node_modules`（见下）。
-
-```sh
-# 1) 本插件的依赖 aa-client（Layer 0，零依赖 ESM 客户端）
-#    （仓库内已做好则跳过）cmd 需要管理员或开发者模式时用 mklink 的 junction 无需特权：
-cmd /c mklink /J "M:\Agent\DshTray\connector\dsh-aa-bridge\node_modules\aa-client" "M:\Agent\DshTray\connector\aa-client"
-
-# 2) 建测试 profile（首次会从 web 模板初始化；已建过跳过）
-dsh --profile aabtest --from-default-profile web -h
-
-# 3) 插件装入 profile（junction + 声明依赖 + 加入 bundles）
-cmd /c mklink /J "C:\Users\hopemyl\.dsh\profiles\aabtest\node_modules\dsh-aa-bridge" "M:\Agent\DshTray\connector\dsh-aa-bridge"
-
-# 4) 编辑 C:\Users\hopemyl\.dsh\profiles\aabtest\package.json：
-#    dependencies 加  "dsh-aa-bridge": "file:M:/Agent/DshTray/connector/dsh-aa-bridge"
-#    dsh.profile.bundles 数组末尾加  "dsh-aa-bridge"
-#    （也可用官方通道：dsh plugin --profile aabtest add M:/Agent/DshTray/connector/dsh-aa-bridge，
-#      它转发 pnpm 并自动 reconcile bundles 列表）
-
-# 5) 启动（端口自选，勿与他人实例冲突）
-dsh --profile aabtest --port 7399 --no-open
-# 启动日志出现：
-#   [dsh-aa-bridge] registered N/M tool(s) from http://127.0.0.1:9123: aa_status, ...
-# 桥不可达时则是：
-#   [dsh-aa-bridge] AA bridge unreachable, no tools registered (...)
+```
+aa_execute_code        执行任意 aardio 代码（含报错回传、aifix 修复建议）
+aa_search_web          AA 的联网搜索
+aa_write_memory 等     AA 的持久记忆四件套
+aa_download_* / aa_github_*   下载与 GitHub 三件套
+aa_capture_screenshot / aa_analyze_image   截图 + 视觉分析
+aa_ide_*               驱动 aardio IDE（含「禁改 AA 源码」护栏）
+aa_load_skill          加载技能包后工具集继续动态增加（browser/photoshop/excel/pdf/word…）
 ```
 
-卸载：删 junction 与 bundles 里的 `dsh-aa-bridge` 一行即可。
+## 🩺 为什么需要它 —— AA 的四大痛点
 
-## 配置
+AA 很能干，但它是个"单机聊天智能体"，想把它接出来用，个个都是坑
+（源码级取证见 [aa-bridge/docs/PAIN-POINTS.md](https://github.com/lim12137/aa-bridge/blob/master/docs/PAIN-POINTS.md)）：
 
-优先级：loader 行 config > 环境变量 > 内置默认。**变量名不要用 `DSH_` 前缀**（harness 启动守卫会拒绝启动期 .env 里的 `DSH_*` 变量）。
+| 痛点 | 具体表现（AA v4.9.26 源码实测） | 本插件/桥如何解决 |
+|---|---|---|
+| **会话切换麻烦** | 单线聊天流，清空当前会话才能开新的；主记忆只在新建会话时加载（autos.aardio L1172）；忙时任务排队 | 工具调用是**无状态 HTTP**，dsh 的会话与 AA 的聊天流完全解耦，多 agent 并行互不抢占；AA 长期记忆依旧共享 |
+| **长会话卡顿** | 聊天界面是 IE/Trident 内嵌渲染，DOM 只增不减；超长只能自动清理（L1205）——卡了就得清 | 用 aacli.exe（无界面桥）时 **AA 侧零渲染**；长文本在你的 dsh 终端里展示 |
+| **订阅套餐绑定特定 agent** | AA 只吃裸 API key（web.rest.aiChat 手填配置）；GLM Coding Plan 等订阅额度 AA 用不上 | **模型与工具解耦**：订阅留在 dsh/agent 侧，工具从桥来——一份订阅两头的价值都拿到 |
+| **本事接不出来** | AA 对外只有微信/飞书两条遥控道，本地零端口零 IPC | 桥 = HTTP + MCP 双协议、127.0.0.1 + token 鉴权；本插件即插即用，桥断了也不崩宿主 |
 
-| 环境变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `AA_BRIDGE_URL` | `http://127.0.0.1:9123` | 桥根地址 |
-| `AA_BRIDGE_TOKEN` | 从 table 文件发现 | 显式 token（`X-AA-Token` 头） |
-| `AA_BRIDGE_TABLE` | `%LOCALAPPDATA%\aardio\autos\aa-bridge.table` | token 发现文件（正则 `token\s*=\s*"([^"]+)"`） |
-| `AA_BRIDGE_TOOL_PREFIX` | `aa_` | 工具名前缀 |
-| `AA_BRIDGE_TIMEOUT_MS` | `120000` | 单次桥请求超时（也是工具 deadline 基数 +5s 余量） |
-| `AA_BRIDGE_BOOT_TIMEOUT_MS` | `6000` | 启动时拉工具目录的预算，超时视为桥不可达（降级不注册） |
+## 📦 前提：先让桥跑起来（本地构建 aacli.exe）
 
-## 已知边界
+桥是工具的来源。两条路（**推荐 b，纯后台无界面**）：
 
-- token 错 → 桥 401；桥关（enabled=false）→ 403；AA 不在线 → 连接拒绝。三者都走降级路径（warning，不注册）。
-- `exec.signal` 不透传到桥（aa-client 未支持 signal），取消靠工具 deadline 兜底。
-- 注册的是启动时刻的工具目录快照；AA 侧 load_skill 动态增删工具需重启 dsh 生效。
-- 桥侧自带黑名单（如 weixin_send_message）；本插件不再二次过滤，策略点在桥。
+**a) 带 AA 界面**：克隆 [aa-bridge](https://github.com/lim12137/aa-bridge) 仓库 →
+用 [aardio IDE](https://www.aardio.com/) 打开 `connector/aa-patched-autos.aardio` → F5 运行 →
+AA「设置」勾选「外部桥」。
 
-## 坑清单（实测实录，dsh 0.1.5-rc.1 / cordis 4.0.2）
+**b) 本地构建 aacli.exe（无界面后台服务，推荐）**：
 
-- **`ctx.effect(fn, label)` 的 fn 是"立即执行的动作"，其返回值/生成器产出才是清理器**。参考插件式写法 `ctx.effect(disposer, label)` 会把 disposer **当场执行** = 注册即注销：注册计数正常、无任何报错，但模型的工具表里没有你的工具（探针实测：register 后 schemas 26，ctx.effect 后立刻掉回 25）。正确写法是生成器让出：`ctx.effect(function* () { yield disposer; }, label)`。
-- **异步注册必须 await**：apply 若同步返回、后台注册，一次性 runner（headless）的 `loader.await()` 等不到注册完成，与首次工具组装竞态。apply 写成 async 并 await 激活（预算受 `AA_BRIDGE_BOOT_TIMEOUT_MS` 约束）即可——loader fiber 会等 apply 的 promise。
-- bundle 的 `cordis.patch.yml` 只能 insert 没有任何更早层创建过的 id，重复插入会让整个 profile 启动崩溃（`duplicate loader entry id: ...`）。
-- 裸导入（如 `aa-client`）必须能从插件**真实路径**的 node_modules 解析：宿主经 junction 装入时 Node 按 realpath 解析，junction 进 profile node_modules 不等于宿主隐式依赖可用。
+```text
+1. git clone https://github.com/lim12137/aa-bridge.git
+2. 用 aardio IDE 打开 connector/aacli/default.aproj
+3. 「发布(F7)」→ 得到 connector/aacli/dist/aacli.exe（约 4MB，静态依赖已内嵌）
+4. 补运行时动态库（只需一次）：
+   powershell -NoProfile -ExecutionPolicy Bypass -File connector/aacli/setup-libs.ps1 ^
+     -AardioLib "你的aardio安装目录\lib"
+   （缺了这步工具请求会静默挂死——sessionHandler 等库不在内嵌范围）
+5. 运行 aacli.exe → 托盘出现图标 → 验证：
+   curl -H "X-AA-Token: <token>" http://127.0.0.1:9123/api/status
+   token 在 %LOCALAPPDATA%\aardio\autos\aa-bridge.table（首次运行自动生成）
+```
+
+注意：与 IDE-F5 版 AA 互斥（同占 9123，先停一个）；停止用
+`POST /api/shutdown` 或托盘右键退出；`--port 9124` 可换端口并存测试。
+
+## 🔧 安装本插件
+
+```sh
+# 1) 建一个 dsh profile（首次从 web 模板初始化，已建过跳过）
+dsh --profile aabridge --from-default-profile web -h
+
+# 2) 插件 junction 进 profile（本仓库 node_modules/aa-client 已内置，无需另装依赖）
+cmd /c mklink /J "C:\Users\<你>\.dsh\profiles\aabridge\node_modules\dsh-aa-bridge" "本仓库路径"
+
+# 3) 编辑 profile 的 package.json：
+#    dsh.profile.bundles 数组末尾加  "dsh-aa-bridge"
+
+# 4) 重启 dsh，看日志：
+#    [dsh-aa-bridge] registered 26/26 tool(s) from http://127.0.0.1:9123
+```
+
+## ⚙️ 配置（profile 行内 config 优先于环境变量）
+
+| config | env | 默认 |
+|---|---|---|
+| baseUrl | `AA_BRIDGE_URL` | `http://127.0.0.1:9123` |
+| token | `AA_BRIDGE_TOKEN` | 从 `%LOCALAPPDATA%\aardio\autos\aa-bridge.table` 自动发现 |
+| tablePath | `AA_BRIDGE_TABLE` | 同上默认路径 |
+| toolPrefix | `AA_BRIDGE_TOOL_PREFIX` | `aa_` |
+| callTimeoutMs | `AA_BRIDGE_TIMEOUT_MS` | `120000` |
+| bootTimeoutMs | `AA_BRIDGE_BOOT_TIMEOUT_MS` | `6000` |
+
+工具命名：`aa_ + 桥工具名`（桥已带前缀不叠加：`aa_status` 仍是 `aa_status`，
+`execute_code` 变 `aa_execute_code`），与 harness 内建工具命名空间隔离。
+
+## 🧯 行为与坑
+
+- **降级契约**：桥不可达（AA/aacli 没开、token 不对、超时）只打一行 warning，
+  不注册任何工具，**绝不弄崩宿主启动**（最多多等一个 boot 预算周期）。
+- 注册是启动时的一次性快照：运行中桥断开不影响已注册工具（调用报错），重启 dsh 恢复。
+- 适配 dsh 0.1.5-rc.1（cordis 4.0.2）。最大坑：**`ctx.effect(fn)` 的 fn 是立即执行的动作**，
+  disposer 必须用生成器让出形式 `ctx.effect(function*(){ yield disposer; })`——
+  直接传 disposer = 注册即注销（探针实测）。给 harness 写插件的都建议读一遍源码注释。
 
 ## License
 

@@ -42,8 +42,8 @@ try {
 catch {
   $msg = $_.Exception.Message
   if ($msg -match "401") { Write-Output '{"error":"401 token 不匹配（aa-bridge.table 与运行实例不一致？）"}' }
-  elseif ($msg -match "403") { Write-Output '{"error":"403 桥已关闭（在 AA 设置里勾选 外部桥 重新开启）"}' }
-  elseif ($msg -match "无法连接|refused|Unable to connect") { Write-Output '{"error":"连接拒绝：桥未开启或 AA 副本未运行"}' }
+  elseif ($msg -match "403") { Write-Output '{"error":"403 桥已关闭（标准方式：运行 aacli.exe；或 AA 设置里勾选 外部桥）"}' }
+  elseif ($msg -match "无法连接|refused|Unable to connect") { Write-Output '{"error":"连接拒绝：桥未开启（运行 aacli.exe，或 AA 副本 + 外部桥）"}' }
   else { Write-Output ("{`"error`":`"" + ($msg -replace '"','''') + "`"}") }
   exit 1
 }

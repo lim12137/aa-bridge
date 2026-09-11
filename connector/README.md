@@ -8,15 +8,15 @@
                         ┌─────────────────────────────────────────┐
                         │  工具来源（三选一，共享配置与 token）      │
                         │                                         │
-                        │  ① AA + 桥补丁    IDE-F5 运行，带聊天界面 │
-                        │  ② aacli.exe      无界面后台进程 ★推荐    │
+                        │  ① aacli.exe      无界面后台常驻 ★推荐   │
+                        │  ② AA + 桥补丁    IDE-F5 运行，带聊天界面 │
                         │  ③ aa-runner.exe  单发执行器（无服务）    │
                         └───────────────┬─────────────────────────┘
                                         │ HTTP :9123（X-AA-Token）
                  ┌──────────┬───────────┼────────────┬─────────────┐
                  ▼          ▼           ▼            ▼             ▼
             aa-cli        zcode      dsh-aa-bridge  curl/脚本   你自己的 agent
-          (命令行客户端)  (插件)   (DeepSeek harness 插件)
+          (命令行客户端)  (插件)  (harness 插件，独立仓库)              
 ```
 
 ## 组件一览
@@ -27,7 +27,7 @@
 | **aa-runner** | [`aa-runner/`](aa-runner/) | 无头单发执行器：执行 aardio 代码 / 驱动 IDE，stdout 单行 JSON | 同上 |
 | **aa-client** | [`aa-client/`](aa-client/) | 零依赖 ESM 客户端（status/tools/call/health，自动发现 token） | Node ≥18 |
 | **aa-cli** | [`aa-cli/`](aa-cli/) | 命令行：`status / tools / call / run`，桥优先、aa-runner 兜底 | Node ≥18 |
-| **dsh-aa-bridge** | [`dsh-aa-bridge/`](dsh-aa-bridge/) | DeepSeek harness 插件：动态注册桥工具为 harness 工具 | dsh 0.1.5+ |
+| **dsh-aa-bridge** | [`dsh-aa-bridge/`](dsh-aa-bridge/) · 独立仓库 [lim12137/dsh-aa-bridge](https://github.com/lim12137/dsh-aa-bridge) | DeepSeek harness 插件：动态注册桥工具为 harness 工具 | dsh 0.1.5+ |
 | **aa-bridge** | [`aa-bridge/`](aa-bridge/) | zcode 插件（skills + 命令 + ps1 客户端） | zcode |
 | AA 桥补丁 | [`aa-patched-autos.aardio`](aa-patched-autos.aardio) | 打在 AA 源码副本上的桥补丁（4 个 PATCH 标记） | aardio IDE |
 

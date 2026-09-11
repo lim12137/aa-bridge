@@ -343,13 +343,13 @@ github_get_repo_zip_url、github_get_content —— 其余 13 个普通工具已
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | 401 | token 错（aa-bridge.table 与运行实例不一致） | 重新读文件取 token |
-| 403 或连接拒绝 | 桥关着；或 AA 重启窗口期瞬断 | AA「设置」勾底部「外部桥」重开（不接受远程唤醒）；拒连先重试 3 次再下结论 |
+| 403 或连接拒绝 | 桥关着；或宿主重启窗口期瞬断 | 标准修复：运行 aacli.exe（无界面桥宿主，仓库 connector/aacli，构建见其 README）——无需打开任何界面；备选：AA「设置」勾底部「外部桥」（不接受远程唤醒）；拒连先重试 3 次再下结论 |
 | 400 "Invalid JSON body" | POST 缺 `Content-Type: application/json` | 补头 |
 | `"another tools/call is running"` | 串行化冲突（一次只允许一个 tools/call） | 等 1~2 秒重试 |
 | 工具不在清单（404） | 黑名单 17：机器人 4（微信/飞书）+ 普通 13（文件 9/进程 3/http_get） | 换 zcode 原生/execute_code 等价实现 |
 | GET 未路由 /api/* 回 405 | apiHandle 先判方法再判路由 | 正常语义，按 405 处理 |
 
-- 开：只能本人在 AA「设置」窗口勾选「外部桥」。
+- 开：标准方式 = 运行 aacli.exe（无界面后台宿主，托盘图标，`--port` 可换端口）；备选 = 本人在 AA「设置」窗口勾选「外部桥」（带聊天界面时）。
 - 关：`aa.ps1 shutdown`（即时、持久化，重启后仍关）——**本插件工作流严禁调用**，会把桥关死。
 
 ## aa.ps1 子命令速查
