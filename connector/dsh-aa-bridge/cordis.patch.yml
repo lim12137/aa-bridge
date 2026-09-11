@@ -1,0 +1,15 @@
+# The dsh-aa-bridge bundle patch: mounts the AA bridge connector plugin.
+#
+# Loader rules (see dsh-web-search-openai's patch for the full record):
+#   * A bundle listed in dsh.profile.bundles contributes THIS file as one
+#     patch layer. Insert ONLY row ids that no earlier layer creates —
+#     re-inserting an existing id crashes the boot with
+#     "duplicate loader entry id: <id>".
+#   * `name` is a module specifier imported by the loader with the profile
+#     directory as its resolution anchor: a bare name resolves from the
+#     profile's node_modules (the junction installed there), a "./x" path
+#     resolves inside the profile directory.
+
+- insert:
+    - id: aa-bridge
+      name: dsh-aa-bridge

@@ -29,15 +29,29 @@
 - **零依赖**：只用 aardio 标准库；token 鉴权 + 仅绑 127.0.0.1
 - **随时开关**：AA「设置」里的「外部桥」勾选框，秒级启停，持久化
 - **安全护栏**：`ide_replace_code` 拒绝替换 AA 源码；`ide_*` 之外还屏蔽了微信/飞书发送等 13 个工具
+- **不需要 AA 运行**：[`connector/aacli`](connector/aacli/) 把桥剥成无界面独立 exe，后台常驻，
+  托盘一个小图标；26 个工具、记忆、技能包原样可用
+
+## 😵 AA 老用户的痛，连接器一贴就灵
+
+| 老大难（源码级取证 → [完整调研](docs/PAIN-POINTS.md)） | aa-bridge 之后 |
+|---|---|
+| **会话切换麻烦**：单线聊天流，清空当前会话才能开新的；主记忆只在新建会话时加载（autos.aardio L1172） | 每个 agent 独立会话**并行跑**，工具走无状态 HTTP，AA 聊天流零占用，长期记忆依旧全局共享 |
+| **长会话卡顿**：聊天界面是 IE/Trident 内嵌渲染，DOM 只增不减，超长只能自动清理（L1205） | aacli.exe **纯后台进程零渲染**，工具调用纯 JSON，永远不卡 |
+| **订阅套餐绑定特定 agent**：AA 只吃裸 API key，GLM Coding Plan 等套餐额度用不上；订了套餐的 zcode 又没有 AA 的工具 | **模型与工具解耦**：套餐留在 agent 侧，工具从桥来——zcode 长出 26+ 工具，订阅一点不浪费 |
+| **本事接不出来**：对外只有微信/飞书两条遥控通道，本地零接口 | HTTP + MCP 双协议、四类客户端即插即用，aacli 连 AA 本体都不用跑 |
 
 ## ⚡ 三分钟接入
 
 ```text
-1. 把 connector/aa-patched-autos.aardio 复制出来，用 aardio IDE 打开 → F5 运行
-   （首次启动自动生成 token： %LocalAppData%\aardio\autos\aa-bridge.table）
-2. AA「设置」→ 勾选底部「外部桥」→ 绿色提示「外部桥已就绪」
+1. 起服务（二选一）：
+   a) 带 AA：connector/aa-patched-autos.aardio 用 aardio IDE 打开 → F5 → 设置里勾「外部桥」
+   b) 纯后台：构建 connector/aacli（README 三步）→ aacli.exe 直接跑，连 IDE 都不用开
+   （首次启动自动生成 token：%LocalAppData%\aardio\autos\aa-bridge.table）
+2. AA「设置」→ 勾选底部「外部桥」→ 绿色提示「外部桥已就绪」（aacli 无此步）
 3a. zcode 用户：把 connector/aa-bridge 目录注册为本地插件/技能（SKILL.md 会教 agent 全部用法）
-3b. 其他 agent：直接 curl ——
+3b. dsh 用户：dsh plugin --profile <名> add connector/dsh-aa-bridge
+3c. 其他 agent：直接 curl ——
        curl -H "X-AA-Token: <token>" http://127.0.0.1:9123/api/tools        # 看工具箱
        curl -H "X-AA-Token: <token>" -H "Content-Type: application/json" \
             http://127.0.0.1:9123/api/tools/call \
@@ -63,12 +77,17 @@ reverseSkill 逆向知识库 / skillCreator 等 13 个）后继续增加，运�
 ## 📁 仓库结构
 
 ```
-├─ connector/
-│  ├─ aa-bridge/                 # zcode 插件（skills + commands + aa.ps1）
-│  │  └─ aa-patch/               # 打好补丁的 AA 源码快照 + 补丁说明
-│  ├─ aa-patched-autos.aardio    # AA 副本（补丁版，F5 即用）
-│  └─ test/                      # api-curl.sh / mcp-curl.sh 验收脚本
-└─ showcase/dshtray/             # 作品① WhaleTray（DshTray 鲸鱼托盘）
+├─ connector/                     # 连接器全家桶（组件地图见 connector/README.md）
+│  ├─ aa-patched-autos.aardio     # AA 副本（补丁版，F5 即用，带聊天界面）
+│  ├─ aacli/                      # ★ 无界面桥服务（独立 exe，后台常驻，不需要 AA）
+│  ├─ aa-runner/                  # 无头单发执行器（执行 aardio 代码 / 驱动 IDE）
+│  ├─ aa-client/                  # 零依赖 ESM 客户端（Node ≥18）
+│  ├─ aa-cli/                     # 命令行客户端（桥优先 / aa-runner 兜底）
+│  ├─ dsh-aa-bridge/              # DeepSeek harness 插件（动态注册 26+ 工具）
+│  ├─ aa-bridge/                  # zcode 插件（skills + commands + aa.ps1）
+│  │  └─ aa-patch/                # 打好补丁的 AA 源码快照 + 补丁说明
+│  └─ test/                       # api-curl.sh / mcp-curl.sh 验收脚本
+└─ showcase/dshtray/              # 作品① WhaleTray（DshTray 鲸鱼托盘）
 ```
 
 ## 🔒 安全设计

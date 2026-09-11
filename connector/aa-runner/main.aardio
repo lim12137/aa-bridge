@@ -1,0 +1,191 @@
+//aa-runner：无头 aardio 执行器（AA 连接器组件，v1.3）
+//AA 不在线时的本地执行通道：读取请求 JSON，执行 aardio 代码或驱动 IDE，stdout 输出一行 JSON。
+//用法：
+//  aa-runner.exe request.json      请求文件
+//  cat request.json | aa-runner.exe  无参数时从 stdin 读请求
+//请求：{"action":"exec","code":"return 1+1"}（action 省略默认 exec）
+//      {"action":"ide","method":"open_file|new_code|get_code|replace_code|get_project","args":{...}}
+//      {"action":"tools"}
+//输出：{"ok":true,"result":...,"printOutput":[...]} 或 {"ok":false,"error":"..."}
+//注意：ide 库为运行时 global.import 按需加载（发布器不嵌入 lib\ide），
+//      需将 lib\ide 与 lib\winex 复制到本 exe 同目录的 \lib\ 下（用户库查找路径）。
+
+import console;
+import JSON;
+import win;
+import thread;
+
+var readRequest = function(){
+	var path = _ARGV[1];
+	if(path){
+		path = tostring(path);
+		if(io.exist(path)) return string.load(path);
+		return null,"请求文件不存在：" ++ path;
+	}
+	return io.stdin.read();
+}
+
+//──── ide_*（运行时加载 ide 库；跨进程驱动 IDE，只需 IDE 打开；含「禁改 AA 源码」护栏）────
+var ideGuardAllowReplace = function(){
+	global.import("ide");
+	global.import("winex");
+	var editor = ide.getActiveCodeEditor();
+	if(!editor) return false;   //无活动编辑器：拒绝（禁止静默新建文档）
+	var hwnd = editor.hwnd;
+	if(!hwnd) return false;
+	var getParent = ::User32.api("GetParent","addr(addr)");
+	var p = hwnd;
+	for(i=1;8;1){
+		p = getParent(p);
+		if(!p) break;
+		var t = "";
+		try{ t = winex.getText(p,260) : "" }catch(e){}
+		if(#t){
+			var lt = string.lower(t);
+			if( string.find(lt,"autos[.]aardio") || string.find(lt,"aa-bridge") || string.find(lt,"\lib\autos\\") ) return false;
+		}
+	}
+	return true;
+}
+
+var runIde = function(method,args){
+	global.import("ide");
+	global.import("winex");
+	select(method) {
+		case "open_file" {
+			if(!args.path) return {ok=false; error="ide_open_file 必须指定 path 参数"};
+			if(!io.exist(args.path)) return {ok=false; error="path 参数指定的文件不存在"};
+			if(ide.openDocument(args.path)) return {ok=true; comment="已在 IDE 中打开指定文件"};
+			thread.delay(100);
+			if(ide.openDocument(args.path)) return {ok=true; comment="已在 IDE 中打开指定文件"};
+			raw.explore(args.path,"/select");
+			return {ok=true; comment="IDE 打开失败，已改为资源管理器定位文件"};
+		}
+		case "new_code" {
+			if(!args.code) return {ok=false; error="ide_new_code 必须指定 code 参数"};
+			var func,err = loadcode(args.code);
+			if(!func) return {ok=false; error=err : "代码编译失败"; compileError=err};
+			if(ide.openCode(args.code)) return {ok=true; comment="已通过编译检测，并在 IDE 中新建文档写入代码"; code=args.code};
+			return {ok=false; error="调用 IDE 接口 ide.openCode 失败"};
+		}
+		case "get_code" {
+			var editor = ide.getActiveCodeEditor();
+			if(!editor) return {ok=false; error="当前未打开代码编辑器"};
+			return {ok=true; code = editor.text};
+		}
+		case "replace_code" {
+			if(!ideGuardAllowReplace()) return {ok=false; error="已按「禁止修改 AA 源码」护栏拒绝：当前活动编辑器疑为 AA 源码，或未打开任何编辑器。"};
+			if(!args.code) return {ok=false; error="ide_replace_code 必须指定 code 参数"};
+			var func,err = loadcode(args.code);
+			if(!func) return {ok=false; error=err : "代码编译失败，已拒绝写入"; compileError=err};
+			var editor = ide.getActiveCodeEditor();
+			if(!editor) return {ok=false; error="当前未打开代码编辑器"};
+			editor.text = args.code;
+			return {ok=true; comment="已替换当前活动编辑器中的代码（护栏已通过）"};
+		}
+		case "get_project" {
+			var path = ide.getProjectPath();
+			if(!#path) return {ok=false; error="当前未打开任何工程文件"};
+			return {ok=true; path = path; xml = string.load(path)};
+		}
+		else return {ok=false; error="未知的 ide 方法：" ++ tostring(method)};
+	}
+}
+
+//──── exec：执行 aardio 代码（print 捕获 / loopMessage 防卡死 / msgbox 无头自动应答）────
+var runExec = function(req){
+	var code = req.code;
+	if(!#tostring(code)) return {ok=false; error="exec 需要 code 字段"};
+	code = tostring(code);
+
+	var func,err = loadcode(code);
+	if(!func){
+		var fixed;
+		try{
+			global.import("ide");   //aifix 在 ide 库里
+			fixed = ide.aifix(code,true,true);
+		}
+		catch(e){ }   //ide 库缺失等情况下不掩盖编译错误本身
+		if(fixed && fixed != code){
+			return {ok=false; error=err; fixedCode=fixed; comment="编译失败；fixedCode 为 aifix 自动修复尝试（仅供参考）"};
+		}
+		return {ok=false; error=err; comment="编译失败"};
+	}
+
+	printOutput = {};
+	print = function(...){
+		table.push(printOutput,[...]);
+	}
+	win.loopMessage = function(){ thread.delay(3000) };  //防用户代码卡死（勿用 lambda：无头环境无此关键字）
+
+	msgboxOutput = {};
+	var rawMsgbox = win.msgbox;
+	win.msgbox = function(str,title,style,hwndOwner,timeout){
+		table.push(msgboxOutput,{
+			message = str; title = title; style = style;
+		});
+		return 1/*_IDOK*/;   //无头模式：永不弹窗，自动 OK
+	}
+
+	var ok,result,resultErr = call(func);
+
+	win.msgbox = rawMsgbox;
+	if( type( win[["_form"]] ) == "class" ){
+		win._form.destroyAll();   //销毁用户代码创建的窗体，防退出挂起
+	}
+
+	if(ok){
+		if(result !== null) resultErr = null;
+		return {
+			ok = true;
+			result = result;
+			returnError = resultErr;
+			printOutput = #printOutput ? printOutput : null;
+			msgboxOutput = #msgboxOutput ? msgboxOutput : null;
+		}
+	}
+	return {
+		ok = false;
+		error = resultErr : result : "运行时错误";
+		printOutput = #printOutput ? printOutput : null;
+		msgboxOutput = #msgboxOutput ? msgboxOutput : null;
+	}
+}
+
+//──── 分发（无头纪律：任何错误都以 JSON 输出，绝不弹框）────
+var out;
+try{
+	var raw,rawErr = readRequest();
+	if(type(raw) != "string" || !#raw){
+		out = {
+			ok = false;
+			error = "未读取到请求：" ++ (rawErr : "需传入请求文件参数，或从 stdin 提供 JSON");
+			debug = { argv = _ARGV; cwd = io.fullpath("./") };
+		}
+	}
+	else {
+		var req = JSON.parse(raw);
+		if(type(req) != "table") error("请求 JSON 解析失败：" ++ tostring(raw));
+		var action = req.action : "exec";
+		select(action) {
+			case "exec" { out = runExec(req); }
+			case "ide" { out = runIde(req.method, req.args : {}); }
+			case "tools" {
+				out = {ok=true; actions={"exec";"ide"}; ideMethods={"open_file";"new_code";"get_code";"replace_code";"get_project"}};
+			}
+			else out = {ok=false; error="未知 action：" ++ tostring(action)};
+		}
+	}
+}
+catch(e){
+	out = {ok=false; error = "runner 内部错误：" ++ tostring(e)};
+}
+
+try{
+	//io.stdout.write 走标准输出流（可重定向）；console.log 走 WriteConsole，重定向到文件时会静默失败
+	//注意：aardio 双引号是原始字符串，'\r\n' 必须用单引号（转义字符串）才是真换行
+	io.stdout.write(JSON.stringify(out : {ok=false; error="无输出"}) ++ '\r\n');
+}
+catch(e){
+	io.stdout.write('{"ok":false,"error":"输出序列化失败：' ++ tostring(e) ++ '"}\r\n');
+}

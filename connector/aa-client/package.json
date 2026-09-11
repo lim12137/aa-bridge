@@ -1,0 +1,18 @@
+{
+  "name": "aa-client",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "aa-bridge 零依赖 ESM 客户端（Layer 0）：status / tools / call / health，自动从 aa-bridge.table 发现 token",
+  "main": "./aa-client.mjs",
+  "exports": "./aa-client.mjs",
+  "files": [
+    "aa-client.mjs"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node test/test.mjs"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,28 @@
+{
+  "name": "dsh-aa-bridge",
+  "description": "AA bridge connector for the DeepSeek Harness tool seam (ctx.tools). At boot it fetches the aa-bridge HTTP tool catalog (GET /api/tools) and dynamically registers each bridge tool as a native harness tool prefixed with aa_; execute forwards to POST /api/tools/call and passes the bridge response through. When the bridge is unreachable it logs a warning and registers nothing — the host always boots.",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "aa-client": "file:../aa-client"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

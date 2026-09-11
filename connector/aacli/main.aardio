@@ -1,0 +1,389 @@
+//aacli：AA( aardio autos ) 无界面桥服务（独立 exe 入口）
+//改造自 autos.aardio 的 AA-BRIDGE PATCH(1/4+4/4)：只保留桥配置 + HTTP/MCP 服务 + autos 工具直通。
+//剥离：主窗体、聊天 UI、微信/飞书、LLM 会话循环。mainForm 用无操作桩对象顶替（handlers 内偶然的
+//UI 调用如 showMessage 安全空转）；aa_read_reply/aa_stop 无会话语义，返回说明性结果。
+//启动：直接运行 aacli.exe（无窗口后台进程）；停止：POST /api/shutdown（带 X-AA-Token）。
+//配置与 AA 完全共享：%LOCALAPPDATA%\aardio\autos\（aa-bridge.table、agent.table、workspace、~memory）。
+//注意：与 IDE-F5 版 AA 互斥使用（同占 9123 端口，先停一个再开另一个）。
+
+//启动阶段日志（排查用；主线程/工作线程各自内联调用）
+var bootLog = function(msg){
+	try{
+		var f = io.open("L:/121/aa-bridge/AA/dist/aacli-boot.log","a");
+		f.write( tostring(time()) ++ " " ++ msg ++ '\r\n' );
+		f.close();
+	}
+	catch(e){}
+}
+bootLog("boot-begin");
+
+import win;
+import win.ui;
+import win.ui.menu;
+import win.util.tray;
+import JSON;
+import fsys.table;
+import wsock.tcp.simpleHttpServer;
+import autos;
+import autos.tools.schemas;
+import autos.tools.handlers;
+bootLog("imports-done");
+
+//──── 桥配置（与 PATCH 1 同语义）────
+AA_BRIDGE_PORT = 9123;
+AA_BRIDGE_CFG = { enabled = true; token = "" };
+try{
+	var t = fsys.table( io.appData("aardio/autos/aa-bridge.table"),{enabled=true;token=""} );
+	if( !#t.token ){
+		t.token = "aa" ++ tostring( time.tick() ) ++ tostring( math.random(100000,999999) );
+		t.save();
+	}
+	AA_BRIDGE_CFG.enabled = t.enabled !== false;
+	AA_BRIDGE_CFG.token = t.token;
+}
+catch(e){ AA_BRIDGE_CFG.enabled = true; }
+bootLog("config-done enabled=" ++ tostring(AA_BRIDGE_CFG.enabled) ++ " tokenLen=" ++ #AA_BRIDGE_CFG.token);
+
+//命令行 --port 9124 可改端口（会话级，不写入配置），便于与 IDE 版 AA 并存测试
+for(i=1;#_ARGV - 1;1){
+	if(_ARGV[i]=="--port"){ AA_BRIDGE_PORT = tonumber(_ARGV[i+1]) : AA_BRIDGE_PORT; }
+}
+if( !#AA_BRIDGE_CFG.token ){
+	AA_BRIDGE_CFG.token = "aa" ++ tostring( time.tick() ) ++ tostring( math.random(100000,999999) );
+	try{
+		var t2 = fsys.table( io.appData("aardio/autos/aa-bridge.table") );
+		t2.token = AA_BRIDGE_CFG.token; t2.save();
+	}
+	catch(e){}
+}
+
+//──── 工作区（与 AA 同款：execute_code 等工具的默认 CWD）────
+try{
+	io.createDir( io.appData("aardio/autos/workspace") );
+	::Kernel32.SetCurrentDirectory( io.appData("aardio/autos/workspace") );
+}
+catch(e){}
+
+//──── mainForm 桩：无界面环境下顶替真实窗体（方法全部无操作、无 upvalue，可跨线程 marshal）────
+var stubMainForm = {
+	text = "aacli (aardio autos) v" ++ autos.version;
+	showMessage = function(){ };
+	msgboxErr = function(){ };
+	msgbox = function(){ return 1 };
+	close = function(){ };
+};
+stubMainForm.btnSend = {
+	busy = function(){ return false };
+	text = "运行";
+	oncommand = function(){ };
+};
+
+//──── 服务启停────
+AA_BRIDGE_SERVER = null;
+var bridgeStop = function(){
+	if( !AA_BRIDGE_SERVER ) return;
+	try{ AA_BRIDGE_SERVER.stop() }catch(e){}
+	AA_BRIDGE_SERVER = null;
+	thread.set("(AABRIDGE_ON)",false);
+}
+var bridgeStart = function(){
+	if( AA_BRIDGE_SERVER ) return;
+	if( !#AA_BRIDGE_CFG.token ) return;
+
+	var bridgePort = AA_BRIDGE_PORT;   //仅主线程使用；工作线程拿不到闭包变量（marshal 只传字节码），token/端口经 threadGlobal 注入
+
+	var aaBridgeApp = function(response,request,session){
+
+		//──── 服务状态（无 UI 版；本函数被 marshal 到工作线程 ⇒ 自包含：仅用 threadGlobal 注入量/标准库/嵌套函数）────
+		var getStatus = function(){
+			import autos;
+			return {
+				bridge = thread.get("(AABRIDGE_ON)") == true;
+				busy = thread.get("(AAMCP_TOOLS_BUSY)") == true;
+				buttonText = "运行";
+				retrying = false;
+				lastApiError = null;
+				messageCount = 0;
+				headless = true;
+				title = "aacli (aardio autos) v" ++ autos.version;
+				port = aaBridgePort;
+				pid = ::Kernel32.GetCurrentProcessId();
+				version = autos.version;
+			};
+		}
+
+		//──── 安全：token 门禁（只绑 127.0.0.1，再校验 X-AA-Token；aaBridgeToken 由 threadGlobal 注入）────
+		var tk = request.headers[["x-aa-token"]];
+		if( !aaBridgeToken || (tk != aaBridgeToken) )
+			return response.errorStatus(401,"bad or missing X-AA-Token",true);
+
+		//──── 直通黑名单（与 PATCH 4 一致：微信/飞书屏蔽；普通文件/进程/http_get 屏蔽，仅保留下载与 GitHub 两套）────
+		var allowAll = false;
+		var exclude = { "weixin_send_message";"weixin_send_file";"feishu_send_message";"feishu_send_file";
+			"list_directory";"read_text_file";"save_files";"load_string";"search_text";
+			"patch_text_file";"edit_text_file";"rollback_text_file";"clean_backup_text_files";
+			"process_popen";"process_execute";"process_powershell";
+			"http_get" };
+
+		var writeJson = function(obj,status){
+			response.contentType = "application/json";
+			var s = JSON.stringify(obj);
+			response.headers["Content-Length"] = #s;
+			response.status = status : 200;
+			response.write(s);
+			response.close(true);
+		}
+		var isExcluded = function(name){
+			for(i=1;#exclude;1){ if(exclude[i]==name) return true; }
+		}
+
+		//──── ide_replace_code 护栏（与 PATCH 4 一致：活动编辑器为 AA 源码则拒绝）────
+		var ideGuardAllowReplace = function(){
+			import ide;
+			import winex;
+			var editor = ide.getActiveCodeEditor();
+			if(!editor) return false;   //无活动编辑器时拒绝：禁止 handler 静默新建文档写入
+			var hwnd = editor.hwnd;
+			if(!hwnd) return false;
+			var getParent = ::User32.api("GetParent","addr(addr)");
+			var p = hwnd;
+			for(i=1;8;1){
+				p = getParent(p);
+				if(!p) break;
+				var t = "";
+				try{ t = winex.getText(p,260) : "" }catch(e){}
+				if(#t){
+					var lt = string.lower(t);
+					if( string.find(lt,"autos[.]aardio") || string.find(lt,"aa-bridge") || string.find(lt,"\\lib\\autos\\") ) return false;
+				}
+			}
+			return true;
+		}
+
+		//──── 工具清单（38 个 autos 工具 + 3 个 aa_* 元工具）────
+		var listTools = function(){
+			import autos.tools.schemas;
+			var tools = {
+				{ name="aa_status"; description="查询 AA 桥服务状态：桥/忙闲、PID、端口、版本（无界面版）";
+				  inputSchema={type="object";properties={}} };
+				{ name="aa_read_reply"; description="无界面版无会话，恒返回空回复";
+				  inputSchema={type="object";properties={}} };
+				{ name="aa_stop"; description="无界面版无任务循环，恒返回未停止";
+				  inputSchema={type="object";properties={}} };
+			};
+			for(i=1;#autos.tools.schemas;1){
+				var f = autos.tools.schemas[i][["function"]];
+				if( f && ( allowAll || !isExcluded(f.name) ) )
+					table.push(tools,{name=f.name;description=f.description;inputSchema=f.parameters});
+			}
+			return { tools = tools };
+		}
+
+		//──── 工具调用（aa_* 无界面版就地应答；其余直通 handlers，aiChat 库同款调用约定）────
+		var callTool = function(name,args){
+			select(name) {
+				case "aa_status" { return getStatus(),false; }
+				case "aa_read_reply" { return { reply = null; comment = "无界面版无会话" },false; }
+				case "aa_stop" { return { stopping = false; comment = "无界面版无任务可停止" },false; }
+				else {
+					if( !allowAll && isExcluded(name) ) return null,false;
+					if( name=="ide_replace_code" && !ideGuardAllowReplace() )
+						return {error="已按「禁止修改 AA 源码」护栏拒绝：当前活动编辑器疑为 AA 源码（autos.aardio / lib\autos / aa-bridge）。请先 ide_new_code 新建文档或切换到其他编辑器再试。"},true;
+					import autos.tools.handlers;
+					if(!thread.get("(AAMCP_HANDLERS_INITED)")){
+						var cfg;
+						try{ cfg = eval( string.load(io.appData("aardio/autos/agent.table")) ) }
+						catch(e){ cfg = null }
+						cfg = cfg : {};
+						autos.tools.handlers.__init__(null,{
+							aiChatConfig = cfg[["itemData"]][[cfg[["selItem"]]]] : {};
+							aiConfigItems = cfg[["itemData"]];
+							chatUi = null; mainForm = mainForm;   //mainForm 为 threadGlobal 注入的无操作桩
+						});
+						thread.set("(AAMCP_HANDLERS_INITED)",true);
+					}
+					var f = autos.tools.handlers[name];
+					if(!f) return null,false;
+					return f(args),false;
+				}
+			}
+		}
+
+		var withBusy = function(fn){
+			if(thread.get("(AAMCP_TOOLS_BUSY)"))
+				return null,{code=-32000;message="another tools/call is running, retry shortly"};
+			thread.set("(AAMCP_TOOLS_BUSY)",true);
+			var result,isErr;
+			try{ result,isErr = fn(); }
+			catch(e){ result,isErr = {error=tostring(e)},true; }
+			thread.set("(AAMCP_TOOLS_BUSY)",null);
+			return result,isErr;
+		}
+
+		//──── MCP 协议层（streamable HTTP 2025-06-18：POST 全回 application/json，通知 202，GET/DELETE 405）────
+		var mcpHandle = function(){
+			var origin = request.headers[["origin"]];
+			if( origin && !string.find(string.lower(origin),"127\.0\.0\.1|localhost") )
+				return response.errorStatus(403,"origin rejected",true);
+			var pv = request.headers[["mcp-protocol-version"]];
+			if( pv && pv!="2025-03-26" && pv!="2025-06-18" )
+				return response.errorStatus(400,"Unsupported MCP-Protocol-Version",true);
+			if( request.method=="GET" || request.method=="DELETE" )
+				return response.errorStatus(405,"Method Not Allowed",true);
+			if( request.method!="POST" )
+				return response.errorStatus(405,"Method Not Allowed",true);
+			var msg = request.postJson();
+			if(!msg) return response.errorStatus(400,"Invalid JSON body",true);
+			var method = msg[["method"]] : "";
+			var id = msg[["id"]];
+			if(method=="initialize"){
+				import autos;
+				var sid = tostring( time.tick() ) ++ tostring( math.random(100000,999999) );
+				response.headers["Mcp-Session-Id"] = sid;
+				var ver = msg.params[["protocolVersion"]];
+				if( ver!="2025-03-26" && ver!="2025-06-18" ) ver = "2025-06-18";
+				return writeJson({
+					jsonrpc="2.0"; id=id;
+					result={
+						protocolVersion=ver;
+						capabilities={ tools={ listChanged=false } };
+						serverInfo={ name="aa-mcp"; version=autos.version ++ "+bridge1" };
+						instructions="AA(aardio autos) 无界面桥：autos 工具直通（含 aardio 代码执行与报错回传）；无会话循环，aa_status 查询状态";
+					}
+				});
+			}
+			if( id===null || string.find(method,"^notifications/") ){
+				response.status = 202;
+				return response.close(true);
+			}
+			var result,err;
+			if(method=="ping") result = {};
+			elseif(method=="tools/list") result = listTools();
+			elseif(method=="tools/call"){
+				var name = msg.params[["name"]];
+				if(!name) err = {code=-32602;message="missing tool name"};
+				else{
+					var toolRes,toolIsErr;
+					toolRes,toolIsErr = withBusy(function(){ return callTool(name,msg.params[["arguments"]]) });
+					if(toolRes===null) err = {code=-32602;message="Unknown tool: "++name};
+					else{
+						var text = type(toolRes)=="table" ? JSON.stringify(toolRes) : tostring(toolRes);
+						result = { content = { { type="text";text=text } } };
+						if(toolIsErr) result.isError = true;
+					}
+				}
+			}
+			else err = {code=-32601;message="method not found: "++method};
+			if(err) return writeJson({ jsonrpc="2.0"; id=id; error=err },200);
+			writeJson({ jsonrpc="2.0"; id=id; result=result },200);
+		}
+
+		//──── 原生 API 层（/api/*，curl/任意 HTTP 客户端直调）────
+		var apiHandle = function(path){
+			var m = request.method;
+			if( m=="GET" && path=="/api/status" ) return writeJson(getStatus());
+			if( m=="GET" && path=="/api/tools" ) return writeJson(listTools());
+			if( m=="GET" && path=="/api/reply" ) return writeJson({ reply=null; comment="无界面版无会话" });
+			if( m!="POST" ) return response.errorStatus(405,"Method Not Allowed",true);
+			var body = request.postJson();
+			if( path=="/api/stop" ) return writeJson({ stopping=false; comment="无界面版无任务可停止" });
+			if( path=="/api/shutdown" ){
+				writeJson({ stopping=true; headless=true });
+				try{
+					var t = fsys.table( io.appData("aardio/autos/aa-bridge.table") );
+					t.enabled = false; t.save();
+				}
+				catch(e){}
+				try{ AA_BRIDGE_CFG.enabled = false }catch(e){}  //chunk 全局在工作线程不存在，尽力同步
+				thread.set("(AAHEADLESS_EXIT)",true);  //主线程轮询到后：停服 + 退出进程（响应已经写出）
+				return;
+			}
+			if(!body) return response.errorStatus(400,"Invalid JSON body",true);
+			if( path=="/api/tools/call" ){
+				var name = body[["name"]];
+				if(!name) return writeJson({ error="missing tool name" },400);
+				var result,isErr = withBusy(function(){ return callTool(name,body[["arguments"]]) });
+				if(result===null) return writeJson({ error="Unknown tool: "++name },404);
+				return writeJson({ result=result; isError=isErr===true });
+			}
+			return response.errorStatus(404,"Not Found",true);
+		}
+
+		//──── 路由 ────
+		var path = request.path : "/";
+		if( path=="/mcp" ) return mcpHandle();
+		if( string.find(path,"^/api/") ) return apiHandle(path);
+		return response.errorStatus(404,"Not Found",true);
+	}
+
+	var ok,err;
+	bootLog("bridgeStart-begin");
+	for(i=1;3;1){   //端口被旧实例占用时自动重试（等旧实例退出释放端口）
+		var srv = wsock.tcp.simpleHttpServer.mainThread(aaBridgeApp);
+		srv.threadNum = 2;    //1 线程跑长任务，另 1 线程保 status/ping 应答不被卡死
+		srv.documentRoot = io.createDir( io.appData("aardio/autos/aa-bridge-root") );  //空目录，避开默认文档分支
+		srv.threadGlobal = { mainForm = stubMainForm; chatUi = null; aaBridgeToken = AA_BRIDGE_CFG.token; aaBridgePort = bridgePort };  //注入请求线程全局（mainForm 桩 + 桥token + 端口）
+		ok,err = srv.start("127.0.0.1",bridgePort);
+		bootLog("srv.start returned ok=" ++ tostring(ok) ++ " err=" ++ tostring(err : ""));
+		if(ok){
+			AA_BRIDGE_SERVER = srv;
+			thread.set("(AABRIDGE_ON)",true);
+			break;
+		}
+		if(i<3) thread.delay(2500);
+	}
+	return ok,err;
+}
+
+//──── 隐藏主窗体 + 托盘图标（用户要求：不显示界面；托盘 = 状态与退出入口）────
+var mainForm = win.form(text="aacli";right=1;bottom=1)
+mainForm.show(false);
+
+var exeDir = io._exedir : "";   //io._exedir = exe 目录（反斜杠结尾）；io.exepath 不存在（实测踩坑）
+var tray = win.util.tray(mainForm, exeDir ++ "autos.ico", "aacli 桥服务（无界面）");
+
+mainForm.popmenu = win.ui.popmenu(mainForm);
+mainForm.popmenu.add("打开工作目录", function(){
+	raw.explore( io.appData("aardio/autos/workspace") );
+});
+mainForm.popmenu.add("退出", function(){
+	thread.set("(AAHEADLESS_EXIT)",true);
+});
+
+//托盘交互：左键双击气泡报状态；右键弹菜单
+mainForm.wndproc = function(hwnd,message,wParam,lParam){
+	if(message == 0xACCF/*_WM_TRAYMESSAGE*/){
+		if(lParam == 0x205/*_WM_RBUTTONUP*/){
+			var x,y = win.getCursorPos();
+			::User32.SetForegroundWindow(mainForm.hwnd);
+			mainForm.popmenu.popup(x,y);
+		}
+		elseif(lParam == 0x203/*_WM_LBUTTONDBLCLK*/){
+			tray.pop("aacli 桥: http://127.0.0.1:" ++ AA_BRIDGE_PORT ++ "/api/status", "aacli");
+		}
+	}
+}
+
+//退出标记轮询（/api/shutdown 或菜单退出置位）→ 停服 + 关窗（结束消息循环，进程干净退出）
+mainForm.setInterval(300, function(){
+	if(thread.get("(AAHEADLESS_EXIT)")){
+		bridgeStop();
+		mainForm.close();
+	}
+});
+
+if( AA_BRIDGE_CFG.enabled ){
+	var ok,err = bridgeStart();
+	if(!ok){
+		bootLog("start-failed: " ++ (err:""));
+		tray.pop("桥启动失败(端口 " ++ AA_BRIDGE_PORT ++ " 可能被占用)，即将退出", "aacli", 3);
+		thread.delay(4000);
+		return;   //直接退出进程
+	}
+	tray.pop("aacli 桥已就绪: http://127.0.0.1:" ++ AA_BRIDGE_PORT ++ "/api/status", "aacli");
+}
+bootLog("enter-message-loop port=" ++ AA_BRIDGE_PORT);
+
+win.loopMessage();
+bootLog("message-loop-exit");
+try{ tray.delete() }catch(e){}

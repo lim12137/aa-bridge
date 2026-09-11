@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<project ver="43" name="aacli" libEmbed="true" icon="\autos.ico" ui="win" output="aacli.exe" CompanyName="aa-bridge" FileDescription="aacli - AA(aardio autos) 无界面桥服务" LegalCopyright="Copyright (C) 2026" ProductName="aacli" InternalName="aacli" FileVersion="0.1.0.0" ProductVersion="0.1.0.0" publishDir="/dist/" dstrip="false">
+	<file name="main.aardio" path="main.aardio" comment="启动程序代码"/>
+</project>
