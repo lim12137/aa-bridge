@@ -32,6 +32,13 @@ import process.popen;
 import web.view;
 
 var WEB_PORT = 7331;
+
+//端口可配置：app\port.txt 写一个数字即覆盖 7331（避免与用户其他 dsh 实例撞车）
+var PORT_FILE = io.joinpath(io.fullpath("/app"),"port.txt");
+if( io.exist(PORT_FILE) ){
+	var pn = tonumber(string.load(PORT_FILE));
+	if(pn){ WEB_PORT = pn; }
+}
 var WEB_URI = "http://127.0.0.1:" ++ WEB_PORT ++ "/";
 
 // ---------- v2.0 自包含布局（全部相对 exe 目录）----------
@@ -55,6 +62,11 @@ var ENV_PATH = io.joinpath(HOME_DIR,".env"); //.env 跟着重定向后的 home
 var runtimeReady = function(){
 	return io.exist(NODE_EXE) && io.exist(DSH_BIN);
 }
+
+// ---------- 进程识别（v2.0.1）：ExecutablePath 精确匹配自家 node.exe，外来 dsh 只提示不触碰 ----------
+var WQL_OURS = "SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND ExecutablePath='" ++ string.replace(NODE_EXE,"\\","\\\\") ++ "'";
+var WQL_ANYDSH = "SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%dsh%lib%bin.js%'";
+var WQL_FOREIGN = "SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%dsh%lib%bin.js%' AND (NOT ExecutablePath='" ++ string.replace(NODE_EXE,"\\","\\\\") ++ "' OR ExecutablePath IS NULL)";
 
 // ---------- 单实例保护 ----------
 ::Kernel32.CreateMutexW(null,false,"Local\\DshTray.SingleInstance");
@@ -251,11 +263,11 @@ var openShell = function(){
 // ---------- 退出：先关闭 dsh 进程与浏览器壳，再退出托盘 ----------
 var exitApp = function(){
 	appendLog("用户选择退出：正在关闭 dsh 进程与内置浏览器……");
-	thread.invokeAndWait(function(){
+	thread.invokeAndWait(function(wqlOurs){
 		import process.popen;
 		import com.wmi;
-		//与 worker 相同的查询：限定 node.exe + dsh lib bin.js，排除 cmd 包装与其他 Node 程序
-		var rows = com.wmi.getTable("SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%dsh%lib%bin.js%'");
+		//v2.0.1：ExecutablePath 精确匹配自家 node.exe——外来 dsh（全局/其他端口）一律不碰
+		var rows = com.wmi.getTable(wqlOurs);
 		if(rows){
 			for(i=1;#rows;1){
 				var id = tonumber(rows[i].ProcessId);
@@ -268,11 +280,11 @@ var exitApp = function(){
 		//验证进程确实退出（最多等 8 秒）
 		var deadline = time.tick() + 8000;
 		while(time.tick() < deadline){
-			var left = com.wmi.getTable("SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%dsh%lib%bin.js%'");
+			var left = com.wmi.getTable(wqlOurs);
 			if(!left || !#left) return;
 			sleep(250);
 		}
-	})
+	},WQL_OURS)
 	if(wbShell) wbShell.close();
 	if(shellForm) shellForm.close();
 	winform.close();
@@ -297,8 +309,8 @@ var dshWorker = function(winform,action,cfg){
 	}
 
 	var findDshProcessIds = function(){
-		//v2.0 命令行 = app\node\node.exe app\dsh\...\lib\bin.js；限定 node.exe 排除 cmd 包装
-		var rows = com.wmi.getTable("SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%dsh%lib%bin.js%'");
+		//v2.0.1：ExecutablePath 精确匹配自家 node.exe（cfg.qOurs 经参数传入）——外来 dsh 只统计不触碰
+		var rows = com.wmi.getTable(cfg.qOurs);
 		var map = {};
 		var ids = {};
 		if(rows){
@@ -391,13 +403,40 @@ var dshWorker = function(winform,action,cfg){
 		return #data > 4000 ? string.slice(data,-4000,-1) : data;
 	}
 
-	var waitForWebServer = function(){
-		var deadline = time.tick() + 45000;
-		while(time.tick() < deadline){
-			if(isWebReady()) return true;
-			sleep(250);
+	//致命日志特征（崩溃原因扫描；waitForWebServer 与失败汇总共用）
+	var logFatalClues = function(){
+		var output = readWebLogTail();
+		var clues = {};
+		var seen = {};
+		for line in string.lines(output,"<\r?\n>|\r") {
+			if( string.indexOf(line,"Cannot find package") || string.indexOf(line,"failed to import loader entry")
+				|| string.indexOf(line,"duplicate loader entry id") || string.indexOf(line,"createZstdDecompress")
+				|| string.indexOf(line,"stripTypeScriptTypes") || string.indexOf(line,"EADDRINUSE") ){
+				line = string.trim(line);
+				if(!seen[line]){ seen[line] = true; table.push(clues,line); }
+			}
 		}
-		return isWebReady();
+		return clues;
+	}
+
+	//v2.0.1：不等满 45 秒——dsh 崩溃时日志和进程状态几秒内就给出答案
+	//返回：true,"" 已就绪；false,"exit"  进程已消失（启动即退）；false,"fatal" 日志出现致命特征；false,"timeout" 兜底超时
+	var waitForWebServer = function(){
+		var deadline = time.tick() + 45000; //45 秒只是兜底上限（慢机器首次启动可能较久）
+		var seenProcess = false;
+		while(time.tick() < deadline){
+			if(isWebReady()) return true,"";
+			var ids = findDshProcessIds();
+			if(#ids) seenProcess = true;
+			if( seenProcess && (#ids == 0) ){
+				//进程消失：二次确认（规避启动瞬间的轮询空窗），连两次为空即判"启动即退"
+				thread.delay(600);
+				if( (#findDshProcessIds() == 0) && !isWebReady() ) return false,"exit";
+			}
+			if(#logFatalClues() > 0) return false,"fatal";
+			thread.delay(250);
+		}
+		return isWebReady(),"timeout";
 	}
 
 	//确保 dsh 网页服务已启动（--no-open：绝不自动打开浏览器）
@@ -425,7 +464,15 @@ var dshWorker = function(winform,action,cfg){
 			prcs.free();
 		}
 
-		if(waitForWebServer()) return true,"";
+		var waitOk,waitWhy = waitForWebServer();
+		if(waitOk) return true,"";
+
+		//v2.0.1：日志文件从未创建 ⇒ 进程根本没被拉起（而非"启动后崩溃"），文案要分清
+		if(!io.exist(cfg.webLogPath)){
+			var m = "未能拉起 dsh 进程（日志文件未创建）。请确认 app\\ 运行时完整（node.exe / dsh\\lib\\bin.js），详见托盘日志。";
+			appendLog("dsh 启动失败：" ++ m);
+			return false,m;
+		}
 
 		var output = readWebLogTail();
 		var summary;
@@ -433,19 +480,21 @@ var dshWorker = function(winform,action,cfg){
 			summary = "当前 Node.js 版本与安装的 dsh 不兼容。请先用托盘菜单「升级 dsh」或重新部署 app\\runtime。";
 		}
 		else {
-			//从日志提取真实崩溃原因（插件依赖无法解析、loader entry 冲突等），不再只报笼统的超时
-			var clues = {};
-			var seen = {};
-			for line in string.lines(output,"<\r?\n>|\r") {
-				if( string.indexOf(line,"Cannot find package") || string.indexOf(line,"failed to import loader entry") || string.indexOf(line,"duplicate loader entry id") ){
-					line = string.trim(line);
-					if(!seen[line]){ seen[line] = true; table.push(clues,line); }
-				}
-			}
+			//从日志提取真实崩溃原因（插件依赖无法解析、loader entry 冲突、端口占用等），不再只报笼统的超时
+			var clues = logFatalClues();
 			while(#clues > 3){ table.remove(clues,1); }
-			summary = #clues > 0
-				? "dsh 启动即崩溃，关键原因（详见日志）：\r\n" ++ string.join(clues,'\r\n')
-				: "dsh 启动后立即退出，或在 45 秒内没有响应。";
+			if(#clues > 0){
+				summary = "dsh 启动即崩溃，关键原因（详见日志）：\r\n" ++ string.join(clues,'\r\n');
+			}
+			elseif(waitWhy=="exit"){
+				summary = "dsh 进程启动后立即退出（未监听端口），详见日志。";
+			}
+			elseif(waitWhy=="fatal"){
+				summary = "dsh 启动即崩溃（日志已出现致命错误，详见日志）。";
+			}
+			else {
+				summary = "dsh 启动后 45 秒内未监听端口。";
+			}
 		}
 		appendLog("dsh 启动失败：" ++ summary);
 		return false,summary ++ '\r\n\r\n日志：' ++ cfg.webLogPath;
@@ -564,24 +613,28 @@ var runAction = function(action,busyTip){
 		npmCli = NPM_CLI;        //app\node\npm-cli\bin\npm-cli.js
 		dshBin = DSH_BIN;        //app\dsh\...\lib\bin.js
 		dshDir = DSH_DIR;        //app\dsh（升级 --prefix 目标）
+		qOurs = WQL_OURS;        //自家进程识别（ExecutablePath 精确匹配）
+		qForeign = WQL_FOREIGN;  //外来 dsh 识别（只统计）
 	})
 }
 
 // ---------- 状态刷新（后台线程查询，结果写入线程共享区）----------
 var refreshStatusAsync = function(){
-	thread.invoke(function(port){
+	thread.invoke(function(port,qOurs,qForeign){
 		import wsock.tcp.client;
 		import com.wmi;
 		var webReady = wsock.tcp.client.test("127.0.0.1",port,1)!=null;
-		var rows = com.wmi.getTable("SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%dsh%lib%bin.js%'");
-		var count = rows ? #rows : 0;
+		var rows = com.wmi.getTable(qOurs);
+		var ours = rows ? #rows : 0;
+		var frows = com.wmi.getTable(qForeign);
+		var foreign = frows ? #frows : 0;
 		var text;
 		if(webReady){ text = "网页已运行"; }
-		elseif(count==0){ text = "未运行"; }
-		elseif(count==1){ text = "正在启动或未响应"; }
-		else { text = "正在启动或未响应（" ++ count ++ " 个进程）"; }
-		thread.set("dshTray.status",{text=text;count=count});
-	},WEB_PORT)
+		elseif(ours>0){ text = "已拉起但未监听 " ++ port ++ "（端口可能被占用/配置了其他端口）"; }
+		elseif(foreign>0){ text = "检测到非本托盘的 dsh 实例（全局安装或其他端口），未接管"; }
+		else { text = "未运行"; }
+		thread.set("dshTray.status",{text=text;ours=ours;foreign=foreign});
+	},WEB_PORT,WQL_OURS,WQL_FOREIGN)
 }
 
 // ---------- 托盘菜单 ----------
