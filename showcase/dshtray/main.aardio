@@ -63,8 +63,8 @@ var runtimeReady = function(){
 	return io.exist(NODE_EXE) && io.exist(DSH_BIN);
 }
 
-// ---------- 进程识别（v2.0.1）：ExecutablePath 精确匹配自家 node.exe，外来 dsh 只提示不触碰 ----------
-var WQL_OURS = "SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND ExecutablePath='" ++ string.replace(NODE_EXE,"\\","\\\\") ++ "'";
+// ---------- 进程识别（v2.0.2）：精确匹配 + 全局清理兜底
+var WQL_OURS  = "SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND ExecutablePath='" ++ string.replace(NODE_EXE,"\\","\\\\") ++ "'";
 var WQL_ANYDSH = "SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%dsh%lib%bin.js%'";
 var WQL_FOREIGN = "SELECT ProcessId FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%dsh%lib%bin.js%' AND (NOT ExecutablePath='" ++ string.replace(NODE_EXE,"\\","\\\\") ++ "' OR ExecutablePath IS NULL)";
 
@@ -226,13 +226,14 @@ var notify = function(title,message,kind){
 var shellForm,wbShell;
 
 //dsh 0.1.5.x 起网页强制 token 鉴权（裸地址 401）。
-//从 dsh-web.log 提取最近一次带 token 的真实地址；日志无记录时回退裸地址。
+//从指定日志提取最近一次带 token 的真实地址；日志无记录时回退裸地址。
 //注意（官方规则 docs/library-guide/builtin/string/patterns.md）：模式里冒号 `:`
 //是特殊符号（匹配任意多字节字符），URL 中的 `http:` 会让模式失配，需 `\:` 转义；
 //模式串建议写在双引号（原样字符串）里，单引号是转义字符串须写双反斜杠。
 //本模式只用「端口数字 + [?]token= + 字符类」，不含冒号与反斜杠，规避全部歧义。
-var readWebUrlFromLog = function(){
-	var data = string.load(WEB_LOG_PATH);
+var readWebUrlFromLog = function(logPath){
+	var p = logPath : WEB_LOG_PATH;   //托盘调用时未传 → 用全局 LOG_DIR；worker 显式传 cfg.webLogPath
+	var data = string.load(p);
 	if(!data) return WEB_URI;
 	if(#data > 8000) data = string.slice(data,-8000,-1); //只扫尾部，避免日志过大
 	var url;
@@ -243,16 +244,16 @@ var readWebUrlFromLog = function(){
 	return WEB_URI;
 }
 
-var openShell = function(){
+var openShell = function(fallbackUrl){
 	if(shellForm){
-		wbShell.go(readWebUrlFromLog()); //重新导航（dsh 可能刚重启过，token 会变）
+		wbShell.go(fallbackUrl : readWebUrlFromLog(WEB_LOG_PATH)); //有 url 参数就用（已读到的 token），否则读全局日志
 		shellForm.show();
 		shellForm.activate();
 		return;
 	}
 	shellForm = win.form(text="DSH 网页";right=1080;bottom=740)
 	wbShell = web.view(shellForm);
-	wbShell.go(readWebUrlFromLog());
+	wbShell.go(fallbackUrl : readWebUrlFromLog(WEB_LOG_PATH));
 	shellForm.onClose = function(){
 		shellForm = null; //用户手动关闭后，下次「打开网页」时重新创建
 		wbShell = null;
@@ -263,11 +264,12 @@ var openShell = function(){
 // ---------- 退出：先关闭 dsh 进程与浏览器壳，再退出托盘 ----------
 var exitApp = function(){
 	appendLog("用户选择退出：正在关闭 dsh 进程与内置浏览器……");
-	thread.invokeAndWait(function(wqlOurs){
+	thread.invokeAndWait(function(wqlAnyDsh){
 		import process.popen;
 		import com.wmi;
-		//v2.0.1：ExecutablePath 精确匹配自家 node.exe——外来 dsh（全局/其他端口）一律不碰
-		var rows = com.wmi.getTable(wqlOurs);
+		//v2.0.2：exitApp 兜底用 WQL_ANYDSH——清所有 dsh 进程（含外来实例），避免僵尸占端口
+		//自家进程精确用 WQL_OURS，其他地方继续用精准匹配避免误杀
+		var rows = com.wmi.getTable(wqlAnyDsh);
 		if(rows){
 			for(i=1;#rows;1){
 				var id = tonumber(rows[i].ProcessId);
@@ -280,11 +282,11 @@ var exitApp = function(){
 		//验证进程确实退出（最多等 8 秒）
 		var deadline = time.tick() + 8000;
 		while(time.tick() < deadline){
-			var left = com.wmi.getTable(wqlOurs);
+			var left = com.wmi.getTable(wqlAnyDsh);
 			if(!left || !#left) return;
 			sleep(250);
 		}
-	},WQL_OURS)
+	},WQL_ANYDSH)
 	if(wbShell) wbShell.close();
 	if(shellForm) shellForm.close();
 	winform.close();
@@ -419,8 +421,6 @@ var dshWorker = function(winform,action,cfg){
 		return clues;
 	}
 
-	//v2.0.1：不等满 45 秒——dsh 崩溃时日志和进程状态几秒内就给出答案
-	//返回：true,"" 已就绪；false,"exit"  进程已消失（启动即退）；false,"fatal" 日志出现致命特征；false,"timeout" 兜底超时
 	var waitForWebServer = function(){
 		var deadline = time.tick() + 45000; //45 秒只是兜底上限（慢机器首次启动可能较久）
 		var seenProcess = false;
@@ -441,7 +441,16 @@ var dshWorker = function(winform,action,cfg){
 
 	//确保 dsh 网页服务已启动（--no-open：绝不自动打开浏览器）
 	var ensureWebServer = function(){
-		if(isWebReady()) return true,"";
+		if(isWebReady()){
+			//v2.0.2：端口已监听但未必是我们拉的（可能外来实例 / 上次残留）。
+			//不管谁来，能拿 token 就刷 WebView2；拿不到才报"已运行"。
+			var url = readWebUrlFromLog();
+			if( string.find(url,"/?token=") ){
+				return true,url; //caller 拿到 url 后负责刷新 shell
+			}
+			//外来的没 log —— 直接返回 true 让 openShell 用裸地址（会 401）+ 加一行提示
+			return true,nil;
+		}
 
 		var hasProcess = #findDshProcessIds() > 0;
 		if(!hasProcess){
@@ -506,18 +515,22 @@ var dshWorker = function(winform,action,cfg){
 			if(isWebReady()){
 				result = {kind="info";title="dsh 正在运行";message="dsh 网页服务已在运行中。"};
 			} else {
-				var ok,msg = ensureWebServer();
+				var ok,msgOrUrl = ensureWebServer();
 				result = ok
 					? {kind="ok";title="dsh 已启动";message="dsh 网页服务已启动（" ++ cfg.url ++ "）。"}
-					: {kind="error";title="无法启动 dsh";message=msg};
+					: {kind="error";title="无法启动 dsh";message=msgOrUrl};
 			}
 		}
 		case "openWeb" {
-			var ok,msg = ensureWebServer();
+			var ok,msgOrUrl = ensureWebServer();
 			if(ok){
-				result = {kind="ok";title="DSH 网页";message="已在内置浏览器中打开 dsh 网页。";openShell=true};
+				//openShell 内部会读 webLog 拿 token，但如果 ensureWebServer 已经返回了 url，
+				//就按这个 url 导航（避免双重读取造成不一致）；msgOrUrl 为 url 说明是外来实例
+				//也带过去，避免裸地址直接 401。失败时弹窗并记日志。
+				appendLog("已就绪: " ++ (msgOrUrl : cfg.url) ++ " → 准备打开 WebView2。");
+				result = {kind="ok";title="DSH 网页";message="已在内置浏览器中打开 dsh 网页。";openShell=true;url=msgOrUrl};
 			} else {
-				result = {kind="error";title="无法启动 dsh";message=msg};
+				result = {kind="error";title="无法启动 dsh";message=msgOrUrl};
 			}
 		}
 		case "upgrade" {
@@ -560,7 +573,7 @@ var dshWorker = function(winform,action,cfg){
 				appendLog("正在重新启动 dsh 网页服务……");
 				var started,startMsg = ensureWebServer();
 				result = started
-					? {kind="ok";title="dsh 已重启";message="dsh 网页服务已重启（" ++ cfg.url ++ "）。"}
+					? {kind="ok";title="dsh 已重启";message="dsh 网页服务已重启（" ++ cfg.url ++ "）。";openShell=true;url=startMsg}
 					: {kind="error";title="重启 dsh 失败";message=startMsg};
 			} else {
 				result = {kind="error";title="重启 dsh 失败";message=msg};
@@ -585,10 +598,23 @@ winform.onWorkerDone = function(result){
 		notify(result.title,result.message,result.kind);
 	}
 	if(result[["openShell"]]){
-		openShell();
+		appendLog("onWorkerDone: 触发 openShell...");
+		try{
+			openShell(result.url);
+			appendLog("onWorkerDone: openShell 完成。");
+		} catch(e){
+			appendLog("onWorkerDone openShell 抛错: " ++ tostring(e));
+			winform.msgboxErr(tostring(e), "WebView2 打开失败");
+		}
 	}
 	elseif(shellForm && result.kind=="ok" ){
-		wbShell.go(readWebUrlFromLog()); //浏览器壳已打开则刷新页面（0.1.5.x 需带 token 的地址）
+		try{
+			wbShell.go(readWebUrlFromLog(WEB_LOG_PATH));
+			appendLog("onWorkerDone: shell 刷新完成。");
+		} catch(e){
+			appendLog("onWorkerDone shell 刷新抛错: " ++ tostring(e));
+			winform.msgboxErr(tostring(e), "WebView2 刷新失败");
+		}
 	}
 	refreshStatusAsync();
 }

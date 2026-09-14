@@ -12,3 +12,9 @@ node-portable.zip
 # 日志
 *.log
 connector/aa-runner/lib/
+
+# DshTray 安装包构建产物
+showcase/dshtray/*.7z
+showcase/dshtray/*Setup*.exe
+showcase/dshtray/sfx.module
+showcase/dshtray/nsis-stage/
