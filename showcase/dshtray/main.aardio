@@ -245,15 +245,22 @@ var readWebUrlFromLog = function(logPath){
 }
 
 var openShell = function(fallbackUrl){
+	//v2.0.3：aardio 的 : 只对 null 兜底——调用方传来的空串 url 必须先归一为 null，
+	//否则 wbShell.go("") 会导航到空白页（v2.0.2 首次打开显示空白/hello 的根因）
+	if(fallbackUrl != null && #fallbackUrl == 0) fallbackUrl = null;
+	//v2.0.3：dsh web 子进程可能在端口就绪后数秒才把最终 token 追加进日志，
+	//worker 读到的 url 可能已作废——导航瞬间以日志最新记录为准，传参仅作兜底
+	var navUrl = readWebUrlFromLog(WEB_LOG_PATH);
+	if(!string.find(navUrl,"/?token=") ) navUrl = fallbackUrl;
 	if(shellForm){
-		wbShell.go(fallbackUrl : readWebUrlFromLog(WEB_LOG_PATH)); //有 url 参数就用（已读到的 token），否则读全局日志
+		wbShell.go(navUrl);
 		shellForm.show();
 		shellForm.activate();
 		return;
 	}
 	shellForm = win.form(text="DSH 网页";right=1080;bottom=740)
 	wbShell = web.view(shellForm);
-	wbShell.go(fallbackUrl : readWebUrlFromLog(WEB_LOG_PATH));
+	wbShell.go(navUrl);
 	shellForm.onClose = function(){
 		shellForm = null; //用户手动关闭后，下次「打开网页」时重新创建
 		wbShell = null;
@@ -304,6 +311,22 @@ var dshWorker = function(winform,action,cfg){
 		var f = io.file(cfg.logPath,"ab+");
 		f.write('[',tostring(time(),"%Y-%m-%d %H:%M:%S"),"] ",msg,'\r\n');
 		f.close();
+	}
+
+	//thread.invoke 不捕获外部闭包：worker 内不能用主作用域的 readWebUrlFromLog（为 null，
+	//调用即线程静默崩死、onWorkerDone 永不回调、busy 卡死）——与 appendLog 同理需内嵌副本。
+	//默认日志路径改用 cfg.webLogPath（主作用域版默认 WEB_LOG_PATH 同样不可见）。
+	var readWebUrlFromLog = function(logPath){
+		var p = logPath : cfg.webLogPath;
+		var data = string.load(p);
+		if(!data) return cfg.url;
+		if(#data > 8000) data = string.slice(data,-8000,-1);
+		var url;
+		for m in string.gmatch(data,cfg.port ++ '/[?]token=[A-Za-z0-9_-]+'){
+			url = m;
+		}
+		if(url) return 'http://127.0.0.1:' ++ url;
+		return cfg.url;
 	}
 
 	var isWebReady = function(){
@@ -474,7 +497,22 @@ var dshWorker = function(winform,action,cfg){
 		}
 
 		var waitOk,waitWhy = waitForWebServer();
-		if(waitOk) return true,"";
+		if(waitOk){
+			//v2.0.3：必须返回带 token 的真实地址；没有就返回 null。
+			//此前返回 ""——aardio 的 : 只对 null 兜底，空串会一路穿透到 wbShell.go("")
+			//且 dsh web 子进程可能在端口就绪后数秒才把最终 token 写进日志（父进程先报一个
+			//会被作废的地址）——等 token 连续两次读取一致再返回，最多等 8 秒
+			var u,last;
+			var deadline = time.tick() + 8000;
+			while(time.tick() < deadline){
+				u = readWebUrlFromLog(cfg.webLogPath);
+				if(u==last && string.find(u,"/?token=") ) return true,u;
+				last = u;
+				thread.delay(800);
+			}
+			if(last && string.find(last,"/?token=") ) return true,last;
+			return true,nil;
+		}
 
 		//v2.0.1：日志文件从未创建 ⇒ 进程根本没被拉起（而非"启动后崩溃"），文案要分清
 		if(!io.exist(cfg.webLogPath)){
@@ -706,5 +744,12 @@ if( !runtimeReady() ){
 //定时刷新状态
 winform.setInterval(refreshStatusAsync,5000);
 refreshStatusAsync();
+
+//v2.0.3：--open 启动参数——启动后自动执行一次「打开网页」（自动化测试用，也可当开机直达）
+for(i=1;#_ARGV;1){
+	if(_ARGV[i]=="--open"){
+		winform.setTimeout(function(){ runAction("openWeb","正在打开 dsh 网页……"); },300);
+	}
+}
 
 win.loopMessage();

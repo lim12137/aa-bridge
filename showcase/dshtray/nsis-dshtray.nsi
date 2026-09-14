@@ -1,20 +1,20 @@
-﻿; DSH 鲸鱼托盘 v2.0.2 自包含安装包（NSIS）
+﻿; DSH 鲸鱼托盘 v2.0.3 自包含安装包（NSIS）
 Unicode true
 !define APPNAME "DSH 鲸鱼托盘"
 !define STAGE "M:\Agent\DshTray\showcase\dshtray\nsis-stage"
 
-Name "${APPNAME} v2.0.2"
-OutFile "M:\Agent\DshTray\showcase\dshtray\DshTray-v2.0.2-Setup.exe"
+Name "${APPNAME} v2.0.3"
+OutFile "M:\Agent\DshTray\showcase\dshtray\DshTray-v2.0.3-Setup.exe"
 InstallDir "$LOCALAPPDATA\DshTray"
 InstallDirRegKey HKCU "Software\DshTray" "InstallDir"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 
-VIProductVersion "2.0.2.0"
+VIProductVersion "2.0.3.0"
 VIAddVersionKey ProductName "DSH 鲸鱼托盘"
 VIAddVersionKey FileDescription "DSH 鲸鱼托盘安装包（全自包含运行时：node + dsh）"
-VIAddVersionKey FileVersion "2.0.2.0"
-VIAddVersionKey ProductVersion "2.0.2.0"
+VIAddVersionKey FileVersion "2.0.3.0"
+VIAddVersionKey ProductVersion "2.0.3.0"
 VIAddVersionKey LegalCopyright "Copyright (C) 2026"
 
 Page directory
