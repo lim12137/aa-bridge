@@ -48,6 +48,13 @@ DshTray\
 第三方插件（`link:` junction 安装）裸导入 `@deepseek-ai/*` 解析失败会令 dsh 启动即崩，
 解法见 `docs/2026-08-23-自包含启动失败-插件依赖解析修复.md`。
 
+### 方式一½：NSIS 安装包（v2.0.3 起，最省事）
+
+下载 Release 中的 `DshTray-v2.0.3-Setup.exe` 双击安装（可选目录，默认 `%LOCALAPPDATA%\DshTray`），
+装完自动启动托盘鲸鱼；静默安装 `DshTray-v2.0.3-Setup.exe /S`。
+启动参数：`--open` 启动后自动打开 dsh 网页（开机自启直达可用）。
+安装包脚本 [`nsis-dshtray.nsi`](nsis-dshtray.nsi)（NSIS 3.x 构建，LZMA solid，约 53 MB）。
+
 ### 方式二：从源码构建
 
 1. 用 [aardio](https://www.aardio.com/) 打开 `default.aproj`
