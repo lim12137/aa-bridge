@@ -350,6 +350,24 @@ var dshWorker = function(winform,action,cfg){
 	//USERPROFILE/HOME 重定向到 app\home：dsh 状态（.dsh）、npm 缓存、新装插件全部自包含
 	var portablePrefix = 'set "USERPROFILE=' ++ cfg.homeDir ++ '"&& set "HOME=' ++ cfg.homeDir ++ '"&& ';
 
+	//v2.0.4 模块解析锚点：本地插件在 app\home\.dsh\local-plugins\<name>\ 下，Node 沿目录
+	//链向上找 node_modules 时并不经过 dsh 的模块森林（app\home\.dsh\profiles\node_modules），
+	//插件 import 的 @deepseek-ai/* 能否解析就取决于回退钩子竞态（「时好时坏」的根源）。
+	//在 app 下建 junction 指向森林补上解析链。目标由 dsh 首启才生成——junction 允许悬空，
+	//生成后自动生效；junction /J 不需要管理员权限；已存在（含悬空）则跳过，幂等。
+	var ensureModuleAnchor = function(){
+		var linkPath = cfg.appDir ++ "\node_modules";
+		var targetPath = cfg.homeDir ++ "\.dsh\profiles\node_modules";
+		if(io.exist(linkPath)) return;
+		//★worker 线程内禁止 popen+readAll（实测读 cmd 子进程永久阻塞，v2.0.4 面包屑定位）——
+		//一律 process() 异步发射；mklink 毫秒级完成，不做退出码验证
+		process("cmd.exe",'/d /s /c mklink /J "' ++ linkPath ++ '" "' ++ targetPath ++ '"',{
+			createNoWindow = true;
+			workDir = cfg.homeDir;
+		});
+		appendLog("模块解析锚点已请求创建：app\\node_modules → app\\home\\.dsh\\profiles\\node_modules。");
+	}
+
 	//修复 .env：新版 dsh 禁止 .env 设置 DSH_* 等引导变量（会直接崩溃退出），
 	//将这些变量从 .env 移出并作为环境变量注入启动命令。
 	var repairEnv = function(){
@@ -462,6 +480,59 @@ var dshWorker = function(winform,action,cfg){
 		return isWebReady(),"timeout";
 	}
 
+	//v2.0.4：把随装本地插件挂载进 web profile。实测证明：仅把插件放进
+	//.dsh\local-plugins 约定目录，dsh 不会自动登记（方案假设不成立）——
+	//登记 = dependencies 的 link: 行 + dsh.profile.bundles 成员 + pnpm 物化。
+	//挂载器是随装的 wire-plugins.mjs。注意：这里刻意不用 popen+readAll
+	//（实测 worker 线程内会永久阻塞）——process() 异步发射 + 轮询文件变更。
+	var wireLocalPlugins = function(){
+		var scriptPath = cfg.appDir ++ "\wire-plugins.mjs";
+		var pkgPath = cfg.homeDir ++ "\.dsh\profiles\web\package.json";
+		var pluginsDir = cfg.homeDir ++ "\.dsh\local-plugins";
+		if(!io.exist(scriptPath) || !io.exist(pkgPath) || !io.exist(pluginsDir)) return false;
+		var before = string.load(pkgPath);
+		var inner = portablePrefix ++ '"' ++ cfg.nodeExe ++ '" "' ++ scriptPath ++ '" "' ++ pluginsDir ++ '" "' ++ pkgPath ++ '"';
+		process("cmd.exe",'/d /s /c "' ++ inner ++ '"',{
+			createNoWindow = true;
+			workDir = cfg.homeDir;
+		});
+		//挂载器约 1 秒完成；以 package.json 内容变化为完成信号，30 秒兜底
+		var deadline = time.tick() + 30000;
+		var after = before;
+		while(time.tick() < deadline){
+			thread.delay(500);
+			after = string.load(pkgPath);
+			if(after != before) break;
+		}
+		var changed = after != before;
+		appendLog(changed ? "已挂载随装本地插件并写入 profile。" : "本地插件挂载：profile 无变更。");
+		return changed;
+	}
+
+	//v2.0.4：物化 profile 依赖（dsh plugin = pnpm 透传）。输出落日志文件，
+	//完成标记文件出现即视为结束（pnpm 首次物化可能数分钟），8 分钟兜底。
+	var installProfileDeps = function(){
+		var ilog = cfg.logDir ++ "\wire-install.log";
+		var marker = cfg.logDir ++ "\wire-install.done";
+		io.remove(ilog);
+		io.remove(marker);
+		var inner = portablePrefix ++ '"' ++ cfg.nodeExe ++ '" "' ++ cfg.dshBin ++ '" plugin --profile web install >> "' ++ ilog ++ '" 2>&1& echo done> "' ++ marker ++ '"';
+		process("cmd.exe",'/d /s /c "' ++ inner ++ '"',{
+			createNoWindow = true;
+			workDir = cfg.homeDir;
+		});
+		var deadline = time.tick() + 480000;
+		while(time.tick() < deadline){
+			if(io.exist(marker)) break;
+			thread.delay(1000);
+		}
+		var ok = io.exist(marker);
+		appendLog(ok
+			? "profile 依赖物化完成（详见 app\\logs\\wire-install.log）。"
+			: "profile 依赖物化超时（8 分钟），仍尝试重启 dsh；若插件未加载请查看 wire-install.log。");
+		return ok;
+	}
+
 	//确保 dsh 网页服务已启动（--no-open：绝不自动打开浏览器）
 	var ensureWebServer = function(){
 		if(isWebReady()){
@@ -480,6 +551,7 @@ var dshWorker = function(winform,action,cfg){
 			if(!io.exist(cfg.nodeExe) || !io.exist(cfg.dshBin)){
 				return false,"自包含运行时不完整：缺少 " ++ cfg.nodeExe ++ " 或 " ++ cfg.dshBin ++ "。请按 README 重新部署 app\\ 目录。";
 			}
+			ensureModuleAnchor();
 			var exportedVars = repairEnv();
 			var pre = portablePrefix;
 			for(i=1;#exportedVars;1){
@@ -498,6 +570,16 @@ var dshWorker = function(winform,action,cfg){
 
 		var waitOk,waitWhy = waitForWebServer();
 		if(waitOk){
+			//v2.0.4：首启生成 profile 后，把随装本地插件挂载进去；有变更则物化。
+			//重启装载不在本 worker 内续跑（实测同线程杀→启长链路会挂起）——
+			//经 thread 共享区请求主线程定时器重新派发一次 openWeb（新 worker），
+			//本轮不开壳，重启装载后的新一轮负责开壳。
+			if(wireLocalPlugins()){
+				installProfileDeps();
+				stopAllDsh();
+				thread.set("dshTray.reopen",true);
+				return true,"",true;
+			}
 			//v2.0.3：必须返回带 token 的真实地址；没有就返回 null。
 			//此前返回 ""——aardio 的 : 只对 null 兜底，空串会一路穿透到 wbShell.go("")
 			//且 dsh web 子进程可能在端口就绪后数秒才把最终 token 写进日志（父进程先报一个
@@ -553,20 +635,21 @@ var dshWorker = function(winform,action,cfg){
 			if(isWebReady()){
 				result = {kind="info";title="dsh 正在运行";message="dsh 网页服务已在运行中。"};
 			} else {
-				var ok,msgOrUrl = ensureWebServer();
+				var ok,msgOrUrl,restarting = ensureWebServer();
 				result = ok
-					? {kind="ok";title="dsh 已启动";message="dsh 网页服务已启动（" ++ cfg.url ++ "）。"}
+					? {kind="ok";title="dsh 已启动";message="dsh 网页服务已启动（" ++ cfg.url ++ "）。";restarting=restarting}
 					: {kind="error";title="无法启动 dsh";message=msgOrUrl};
 			}
 		}
 		case "openWeb" {
-			var ok,msgOrUrl = ensureWebServer();
+			var ok,msgOrUrl,restarting = ensureWebServer();
 			if(ok){
 				//openShell 内部会读 webLog 拿 token，但如果 ensureWebServer 已经返回了 url，
 				//就按这个 url 导航（避免双重读取造成不一致）；msgOrUrl 为 url 说明是外来实例
 				//也带过去，避免裸地址直接 401。失败时弹窗并记日志。
-				appendLog("已就绪: " ++ (msgOrUrl : cfg.url) ++ " → 准备打开 WebView2。");
-				result = {kind="ok";title="DSH 网页";message="已在内置浏览器中打开 dsh 网页。";openShell=true;url=msgOrUrl};
+				//挂载重启轮（restarting）本轮不开壳——重启后的新一轮 openWeb 负责开壳。
+				appendLog("已就绪: " ++ (msgOrUrl : cfg.url) ++ (restarting ? " → 本地插件已变更，即将重启装载。" : " → 准备打开 WebView2。"));
+				result = {kind="ok";title="DSH 网页";message="已在内置浏览器中打开 dsh 网页。";openShell = !restarting;url=msgOrUrl};
 			} else {
 				result = {kind="error";title="无法启动 dsh";message=msgOrUrl};
 			}
@@ -671,6 +754,8 @@ var runAction = function(action,busyTip){
 		webLogPath = WEB_LOG_PATH;
 		homeDir = HOME_DIR;      //★USERPROFILE/HOME 重定向目标（自包含状态根）
 		workDir = HOME_DIR;
+		appDir = APP_DIR;        //★v2.0.4 模块解析锚点 junction 的落点（app 下）
+		logDir = LOG_DIR;        //★v2.0.4 插件物化日志/完成标记目录
 		url = WEB_URI;
 		envPath = ENV_PATH;      //app\home\.env（跟随重定向）
 		nodeExe = NODE_EXE;      //app\node\node.exe
@@ -741,8 +826,18 @@ if( !runtimeReady() ){
 	);
 }
 
-//定时刷新状态
-winform.setInterval(refreshStatusAsync,5000);
+//定时刷新状态；v2.0.4：同时消费 worker 的「挂载后重启装载」请求
+//（worker 线程不能回调主作用域闭包，只能经共享区请求主线程重派发）
+var onTimer = function(){
+	if(thread.get("dshTray.reopen") != null){
+		thread.set("dshTray.reopen",null);
+		busy = false;
+		runAction("openWeb","本地插件已装载，正在重启 dsh 网页服务……");
+		return;
+	}
+	refreshStatusAsync();
+}
+winform.setInterval(onTimer,5000);
 refreshStatusAsync();
 
 //v2.0.3：--open 启动参数——启动后自动执行一次「打开网页」（自动化测试用，也可当开机直达）
