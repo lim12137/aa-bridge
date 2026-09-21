@@ -26,9 +26,11 @@ Section "install"
   SetOutPath "$INSTDIR"
 
   ; 主程序、插件挂载器与一键启动脚本
+  SetOutPath "$INSTDIR"
   File "${STAGE}\DshTray.exe"
-  File "${STAGE}\app\wire-plugins.mjs"
   File "${STAGE}\安装并运行.bat"
+  SetOutPath "$INSTDIR\app"
+  File "${STAGE}\app\wire-plugins.mjs"
 
   ; 自包含运行时（node + dsh，已裁非 x64 平台二进制）
   SetOutPath "$INSTDIR\app\node"

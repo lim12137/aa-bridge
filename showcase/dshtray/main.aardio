@@ -511,12 +511,16 @@ var dshWorker = function(winform,action,cfg){
 
 	//v2.0.4：物化 profile 依赖（dsh plugin = pnpm 透传）。输出落日志文件，
 	//完成标记文件出现即视为结束（pnpm 首次物化可能数分钟），8 分钟兜底。
+	//CI=1：pnpm 对「重建 modules 目录」类确认提示在非交互模式自动按默认执行；
+	//但 CI 会让 pnpm 默认 --frozen-lockfile——本地插件 link 行变更后锁文件过期会
+	//直接失败（ERR_PNPM_OUTDATED_LOCKFILE），故显式 --no-frozen-lockfile。
+	//标记用 && 链式写入：只有 pnpm 成功才写 done，失败写 fail（勿用裸 &）。
 	var installProfileDeps = function(){
 		var ilog = cfg.logDir ++ "\wire-install.log";
 		var marker = cfg.logDir ++ "\wire-install.done";
 		io.remove(ilog);
 		io.remove(marker);
-		var inner = portablePrefix ++ '"' ++ cfg.nodeExe ++ '" "' ++ cfg.dshBin ++ '" plugin --profile web install >> "' ++ ilog ++ '" 2>&1& echo done> "' ++ marker ++ '"';
+		var inner = 'set "CI=1"&& ' ++ portablePrefix ++ '"' ++ cfg.nodeExe ++ '" "' ++ cfg.dshBin ++ '" plugin --profile web install --no-frozen-lockfile >> "' ++ ilog ++ '" 2>&1&& echo done> "' ++ marker ++ '"|| echo fail> "' ++ marker ++ '"';
 		process("cmd.exe",'/d /s /c "' ++ inner ++ '"',{
 			createNoWindow = true;
 			workDir = cfg.homeDir;
@@ -526,10 +530,14 @@ var dshWorker = function(winform,action,cfg){
 			if(io.exist(marker)) break;
 			thread.delay(1000);
 		}
-		var ok = io.exist(marker);
+		var ok = false;
+		if(io.exist(marker)){
+			var content = string.trim(string.load(marker) : "");
+			ok = (content == "done");
+		}
 		appendLog(ok
 			? "profile 依赖物化完成（详见 app\\logs\\wire-install.log）。"
-			: "profile 依赖物化超时（8 分钟），仍尝试重启 dsh；若插件未加载请查看 wire-install.log。");
+			: "profile 依赖物化失败（详见 app\\logs\\wire-install.log）。");
 		return ok;
 	}
 
@@ -604,6 +612,17 @@ var dshWorker = function(winform,action,cfg){
 		}
 
 		var output = readWebLogTail();
+		//v2.0.4 自愈：挂载后的插件依赖未物化（安装中断/杀进程残留）会让 dsh 拒绝启动。
+		//检测到该特征时自动 pnpm 物化并回主线程重派发一次；每会话仅尝试一次防循环。
+		if( string.indexOf(output,"cannot resolve profile bundle") && thread.get("dshTray.healTried") == null ){
+			thread.set("dshTray.healTried",true);
+			thread.set("dshTray.healing",true);
+			appendLog("检测到插件依赖未物化，执行 pnpm install 后自动重启 dsh……");
+			installProfileDeps();
+			stopAllDsh();
+			thread.set("dshTray.reopen",true);
+			return false,"已自动执行依赖物化（pnpm install），正在重启 dsh 装载插件……";
+		}
 		var summary;
 		if( string.indexOf(output,"createZstdDecompress") || string.indexOf(output,"stripTypeScriptTypes") ){
 			summary = "当前 Node.js 版本与安装的 dsh 不兼容。请先用托盘菜单「升级 dsh」或重新部署 app\\runtime。";
@@ -636,9 +655,15 @@ var dshWorker = function(winform,action,cfg){
 				result = {kind="info";title="dsh 正在运行";message="dsh 网页服务已在运行中。"};
 			} else {
 				var ok,msgOrUrl,restarting = ensureWebServer();
-				result = ok
-					? {kind="ok";title="dsh 已启动";message="dsh 网页服务已启动（" ++ cfg.url ++ "）。";restarting=restarting}
-					: {kind="error";title="无法启动 dsh";message=msgOrUrl};
+				if(ok){
+					result = {kind="ok";title="dsh 已启动";message="dsh 网页服务已启动（" ++ cfg.url ++ "）。";restarting=restarting};
+				} elseif(thread.get("dshTray.healing") != null){
+					//自愈轮：非阻塞提示，重启装载由重派发的 openWeb 完成
+					thread.set("dshTray.healing",null);
+					result = {kind="info";title="正在修复 dsh 运行时";message=msgOrUrl;restarting=true};
+				} else {
+					result = {kind="error";title="无法启动 dsh";message=msgOrUrl};
+				}
 			}
 		}
 		case "openWeb" {
@@ -650,6 +675,9 @@ var dshWorker = function(winform,action,cfg){
 				//挂载重启轮（restarting）本轮不开壳——重启后的新一轮 openWeb 负责开壳。
 				appendLog("已就绪: " ++ (msgOrUrl : cfg.url) ++ (restarting ? " → 本地插件已变更，即将重启装载。" : " → 准备打开 WebView2。"));
 				result = {kind="ok";title="DSH 网页";message="已在内置浏览器中打开 dsh 网页。";openShell = !restarting;url=msgOrUrl};
+			} elseif(thread.get("dshTray.healing") != null){
+				thread.set("dshTray.healing",null);
+				result = {kind="info";title="正在修复 dsh 运行时";message=msgOrUrl;restarting=true};
 			} else {
 				result = {kind="error";title="无法启动 dsh";message=msgOrUrl};
 			}
